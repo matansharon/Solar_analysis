@@ -314,7 +314,8 @@ Expected: FAIL (`ModuleNotFoundError`)
 
 ```python
 from __future__ import annotations
-from dataclasses import dataclass, field, asdict
+import dataclasses
+from dataclasses import dataclass, field
 from enum import Enum
 
 class TimeRange(str, Enum):
@@ -420,18 +421,18 @@ class PlantData:
                 return o.value
             if isinstance(o, list):
                 return [convert(x) for x in o]
-            if hasattr(o, "__dataclass_fields__"):
-                return {k: convert(v) for k, v in asdict(o).items()}
+            if dataclasses.is_dataclass(o):
+                return {f.name: convert(getattr(o, f.name)) for f in dataclasses.fields(o)}
             return o
         return convert(self)
 ```
 
-Note: `asdict` recurses dataclasses to dicts but leaves Enums as-is; the `convert` wrapper coerces enums to their `.value`. (asdict already deep-copies nested dataclasses, so `convert` mostly re-walks; keep it — it guarantees enum coercion for the top-level walk. Verified by the test.)
+Note: a single recursive walk that coerces every `Enum` to its `.value` at any depth and recurses nested dataclasses via `dataclasses.fields` — no `asdict`, so nested enums in lists (e.g. `Device.status`) are always coerced. Result is JSON-serializable.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_schema.py -v`
-Expected: PASS (4 passed). If enum coercion fails inside nested lists, replace the body of `to_dict` with a manual recursive walk that does not call `asdict` (walk `self.__dict__`). The test asserts nested enum coercion, so this must pass before committing.
+Expected: PASS (4 passed). The test asserts nested enum coercion (`devices[0].status == "online"`), which the recursive `to_dict` walk handles directly.
 
 - [ ] **Step 5: Commit**
 
@@ -1784,17 +1785,14 @@ def test_pipeline_survives_one_plant_failure(tmp_path):
         def login(self): raise RuntimeError("auth failed")
         def fetch(self, tr): raise RuntimeError("nope")
     cfg = AppConfig(plants=[
-        PlantConfig("Bad", AuthConfig("growatt", username="u", password="p")),
-        PlantConfig("Good", AuthConfig("growatt", username="u", password="p")),
+        PlantConfig("Bad", AuthConfig("growatt", username="bad", password="p")),
+        PlantConfig("Good", AuthConfig("growatt", username="good", password="p")),
     ])
     ss = SessionStore(str(tmp_path))
-    def factory(auth, store):
-        return Boom() if auth.username == "u" and cfg.plants[0].name == "Bad" and store is ss and False else None
-    # simpler: alternate by call order
-    seq = [Boom(), FakeAdapter(_pd("Good"))]
-    def factory2(auth, store): return seq.pop(0)
+    seq = [Boom(), FakeAdapter(_pd("Good"))]   # dispatched in plant order
+    def factory(auth, store): return seq.pop(0)
     def analyzer(plants, tr, c, client=None): return "## Production & Performance\nok"
-    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory2, analyzer=analyzer)
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
     names = [p.plant_name for p in res["plants"]]
     assert "Good" in names and "Bad" not in names
 ```
