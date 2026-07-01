@@ -37,8 +37,8 @@ def main(argv=None):
     html = render_html(report_md, title, subtitle)
     path = write_report(html, out_dir)
     if res["verify_missing"]:
-        print(f"[warn] {len(res['verify_missing'])} report numbers not found in DATA: "
-              f"{res['verify_missing'][:8]}", file=sys.stderr)
+        print(f"[note] {len(res['verify_missing'])} report figure(s) not found verbatim in source data "
+              f"(may include derived deltas): {res['verify_missing'][:8]}", file=sys.stderr)
     print(f"Report written: {path}")
     return 0
 

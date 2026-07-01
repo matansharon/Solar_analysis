@@ -50,6 +50,11 @@ def map_solaredge_plant(details: dict, overview: dict, inventory: dict) -> Plant
     return pd
 
 class SolarEdgeAdapter(SolarPortalAdapter):
+    """Password-mode fetch replays internal monitoring.solaredge.com endpoints; the
+    exact internal JSON paths/response shapes are finalized during the live smoke
+    test (see README) — the api_key mode uses the documented official API and is
+    complete."""
+
     platform = "solaredge"
 
     OFFICIAL_BASE = "https://monitoringapi.solaredge.com"
@@ -66,7 +71,7 @@ class SolarEdgeAdapter(SolarPortalAdapter):
                 raise AdapterError("solaredge: mode=api_key but no api_key provided")
             return
         cached = self.sessions.load("solaredge")
-        if cached and cached.get("cookie"):
+        if cached and cached.get("cookies"):
             return
         raise AdapterError(
             "solaredge: no cached session cookie. Run `python -m solaranalysis.tools.se_login` "
@@ -80,9 +85,9 @@ class SolarEdgeAdapter(SolarPortalAdapter):
             r = http.get(f"{self.OFFICIAL_BASE}{path}", params=params, timeout=30)
         else:
             cached = self.sessions.load("solaredge") or {}
+            cookies = cached.get("cookies", {})
             r = http.get(f"{self.OFFICIAL_BASE}{path}", params=params,
-                         cookies={"SPRING_SECURITY_REMEMBER_ME_COOKIE": cached.get("cookie", "")},
-                         timeout=30)
+                         cookies=cookies, timeout=30)
         r.raise_for_status()
         return r.json()
 

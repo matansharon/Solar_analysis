@@ -34,6 +34,10 @@ def test_verify_numbers_no_substring_false_negative():
     missing = verify_numbers("Plant A produced 500 kWh.", "plant A energy 5000 kWh")
     assert "500" in missing
 
+def test_verify_numbers_ignores_percentages():
+    missing = verify_numbers("efficiency up 27% this month.", "plant A energy 5000")
+    assert missing == []
+
 def test_run_analysis_uses_injected_client():
     class FakeMsg:
         content = [type("B", (), {"type": "text", "text": "## Production & Performance\nok"})()]

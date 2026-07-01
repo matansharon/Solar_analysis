@@ -1,4 +1,3 @@
-import os
 from solaranalysis.config import load_config
 
 def test_load_config_resolves_env(tmp_path, monkeypatch):

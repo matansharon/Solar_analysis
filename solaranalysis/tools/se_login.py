@@ -10,11 +10,9 @@ import os
 from dotenv import load_dotenv
 from ..core.session_store import SessionStore
 
-LOGIN_URL = "https://monitoring.solaredge.com/solaredge-apigw/api/login"
-DASHBOARD_URL = "https://monitoring.solaredge.com/solaredge-web/p/home"
 COOKIE_TTL = 20 * 24 * 3600  # ~20 days (community-reported validity)
 
-def harvest_cookie(username: str, password: str, session_store: SessionStore) -> str:
+def harvest_cookie(username: str, password: str, session_store: SessionStore) -> dict:
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=False)  # headed: user can solve challenges
@@ -28,15 +26,11 @@ def harvest_cookie(username: str, password: str, session_store: SessionStore) ->
         page.wait_for_url("**/solaredge-web/**", timeout=120000)  # allow manual challenge
         cookies = ctx.cookies()
         browser.close()
-    # Pick the session cookie (name drifts during migration; prefer known candidates).
-    wanted = ("SPRING_SECURITY_REMEMBER_ME_COOKIE", "JSESSIONID", "SolarEdge_Session")
-    value = next((c["value"] for name in wanted for c in cookies if c["name"] == name), None)
-    if not value and cookies:
-        value = cookies[0]["value"]
-    if not value:
+    if not cookies:
         raise RuntimeError("se_login: no cookie captured")
-    session_store.save("solaredge", {"cookie": value}, ttl_seconds=COOKIE_TTL)
-    return value
+    cookie_dict = {c["name"]: c["value"] for c in cookies}
+    session_store.save("solaredge", {"cookies": cookie_dict}, ttl_seconds=COOKIE_TTL)
+    return cookie_dict
 
 def main():
     load_dotenv()

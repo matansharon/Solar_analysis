@@ -86,10 +86,8 @@ class GrowattAdapter(SolarPortalAdapter):
 
     def login(self) -> None:
         client = self._ensure_client()
-        cached = self.sessions.load("growatt")
-        if cached and cached.get("user_id"):
-            self._user_id = cached["user_id"]
-            return
+        if self._user_id is not None:
+            return  # already authenticated in this process
         if not self.sessions.can_poll("growatt", 300):
             raise AdapterError("growatt: poll guard active (min 5 min between logins)")
         resp = client.login(self.auth.username, self.auth.password)
@@ -97,7 +95,6 @@ class GrowattAdapter(SolarPortalAdapter):
         if not resp or not resp.get("success"):
             raise AdapterError("growatt: login failed")
         self._user_id = resp["user"]["id"]
-        self.sessions.save("growatt", {"user_id": self._user_id}, ttl_seconds=3600)
 
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         client = self._ensure_client()

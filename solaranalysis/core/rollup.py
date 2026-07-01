@@ -5,11 +5,9 @@ from .schema import EnergyPoint, PlantData, TimeRange
 def rollup_energy(points: list[EnergyPoint], target_granularity: str) -> list[EnergyPoint]:
     key_len = 7 if target_granularity == "month" else 4  # YYYY-MM or YYYY
     buckets: dict[str, float] = defaultdict(float)
-    seen_null: dict[str, bool] = defaultdict(bool)
     for p in points:
         key = p.timestamp_local[:key_len]
         if p.energy_kwh is None:
-            seen_null[key] = True
             continue
         buckets[key] += p.energy_kwh
     out = []

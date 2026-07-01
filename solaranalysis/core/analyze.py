@@ -72,10 +72,12 @@ def verify_numbers(report_md: str, data_block: str) -> list[str]:
     present.discard("")
     present.discard("-")
     missing = []
-    for m in _NUM_RE.findall(report_md):
-        norm = _norm(m)
+    for m in _NUM_RE.finditer(report_md):
+        norm = _norm(m.group())
         if norm in ("", "-"):
             continue
+        if report_md[m.end():m.end() + 1] == "%":
+            continue  # percentages are derived, not expected verbatim in DATA
         if norm not in present:
             missing.append(norm)
     return missing

@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
-from solaranalysis.adapters.growatt import map_growatt_plant
+from solaranalysis.adapters.growatt import map_growatt_plant, GrowattAdapter
 from solaranalysis.core.schema import DeviceStatus, AlertSeverity
+from solaranalysis.core.session_store import SessionStore
+from solaranalysis.config import AuthConfig
 
 FX = json.loads((Path(__file__).parent / "fixtures" / "growatt_plant.json").read_text(encoding="utf-8"))
 
@@ -32,3 +34,18 @@ def test_device_status_and_fault_alert():
 def test_empty_latlon_becomes_none():
     pd = map_growatt_plant(FX["plant_meta"], FX["energy"], FX["devices"])
     assert pd.latitude is None and pd.longitude is None
+
+def test_login_authenticates_client(tmp_path):
+    class FakeClient:
+        def __init__(self):
+            self.login_called_with = None
+        def login(self, u, p):
+            self.login_called_with = (u, p)
+            return {"success": True, "user": {"id": "u1"}}
+
+    fake = FakeClient()
+    auth = AuthConfig("growatt", username="u", password="p")
+    adapter = GrowattAdapter(auth, SessionStore(str(tmp_path)), client=fake)
+    adapter.login()
+    assert fake.login_called_with == ("u", "p")
+    assert adapter._user_id == "u1"
