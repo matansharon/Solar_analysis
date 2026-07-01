@@ -29,6 +29,11 @@ def test_verify_numbers_flags_hallucination():
     assert "9999" in missing
     assert "5000" not in missing
 
+def test_verify_numbers_no_substring_false_negative():
+    # 500 is a substring of the real 5000 but is NOT a real value -> must be flagged
+    missing = verify_numbers("Plant A produced 500 kWh.", "plant A energy 5000 kWh")
+    assert "500" in missing
+
 def test_run_analysis_uses_injected_client():
     class FakeMsg:
         content = [type("B", (), {"type": "text", "text": "## Production & Performance\nok"})()]

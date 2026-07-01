@@ -66,13 +66,17 @@ def build_data_block(plants: list[PlantData], time_range: TimeRange, meta: dict)
     return "\n".join(parts)
 
 def verify_numbers(report_md: str, data_block: str) -> list[str]:
-    haystack = data_block.replace(",", "")
+    def _norm(tok):
+        return tok.replace(",", "").rstrip(".")
+    present = {_norm(m) for m in _NUM_RE.findall(data_block)}
+    present.discard("")
+    present.discard("-")
     missing = []
     for m in _NUM_RE.findall(report_md):
-        norm = m.replace(",", "").rstrip(".")
+        norm = _norm(m)
         if norm in ("", "-"):
             continue
-        if norm not in haystack:
+        if norm not in present:
             missing.append(norm)
     return missing
 
