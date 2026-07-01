@@ -1,0 +1,4 @@
+{"details": {"id": 123, "name": "SolarEdge Roof", "peakPower": 90.0,
+  "currency": "ILS", "installationDate": "2021-03-15",
+  "location": {"country": "Israel", "city": "Karmiel", "address": "1 Sun St",
+               "timeZone": "Asia/Jerusalem"}}}
