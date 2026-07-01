@@ -1,0 +1,15 @@
+{
+  "plant_meta": {"id": "9001", "plantName": "Growatt Roof", "nominalPower": "100000",
+                 "city": "Karmiel", "country": "Israel", "lat": "", "lon": "",
+                 "createDate": "2022-05-01", "currency": "ILS"},
+  "energy": {"eToday": "42.5", "eMonth": "980.0", "eTotal": "125000.0",
+             "currentPower": "63500"},
+  "devices": [
+    {"deviceSn": "INV-A", "deviceModel": "MIN 5000", "status": 1, "pac": "5000",
+     "eTotal": "60000", "temperature": "41.2", "lastUpdateTime": "2026-07-01 12:00:00",
+     "warnCode": "0", "warnText": ""},
+    {"deviceSn": "INV-B", "deviceModel": "MIN 5000", "status": 3, "pac": "0",
+     "eTotal": "58000", "temperature": "0", "lastUpdateTime": "2026-06-28 09:00:00",
+     "warnCode": "203", "warnText": "PV isolation low"}
+  ]
+}
