@@ -1,4 +1,4 @@
-from solaranalysis.core.schema import PlantData, Metric
+from solaranalysis.core.schema import PlantData, Metric, EnergyPoint
 from solaranalysis.core.validate import validate_plant
 
 def _plant(**kw):
@@ -29,3 +29,13 @@ def test_clean_plant_no_flags():
                 performance_ratio=Metric(0.83, "ratio", is_derived=True))
     validate_plant(pd)
     assert pd.data_quality_flags == []
+
+def test_negative_power_flagged():
+    pd = _plant(current_power_kw=Metric(-1.0, "kW"))
+    validate_plant(pd)
+    assert any("current_power_kw" in f and "negative" in f for f in pd.data_quality_flags)
+
+def test_negative_timeseries_energy_flagged():
+    pd = _plant(energy_timeseries=[EnergyPoint("2025-01-01", -3.0, "day")])
+    validate_plant(pd)
+    assert any("energy_timeseries" in f for f in pd.data_quality_flags)
