@@ -87,7 +87,7 @@ class SolarEdgeAdapter(SolarPortalAdapter):
         return r.json()
 
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
-        if self._http is None and self.auth.mode == "api_key":
+        if self._http is None:
             self.login()
         sites = self._get("/sites/list", {}).get("sites", {}).get("site", [])
         results = []
