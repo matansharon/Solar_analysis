@@ -1,0 +1,8 @@
+growattServer>=2.2.0
+anthropic>=0.40.0
+requests>=2.31
+playwright>=1.44
+python-dotenv>=1.0
+PyYAML>=6.0
+markdown>=3.6
+pytest>=8.0

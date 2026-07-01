@@ -1,0 +1,20 @@
+model: null            # null -> auto (sonnet-5, opus for 12mo/all)
+max_input_tokens: 60000
+output_language: en    # en | he
+plants:
+  - name: SolarEdge Roof
+    auth:
+      platform: solaredge
+      mode: password
+      username: ${SOLAREDGE_USERNAME}
+      password: ${SOLAREDGE_PASSWORD}
+    tariff_per_kwh: 0.55
+    currency: ILS
+  - name: Growatt Roof
+    auth:
+      platform: growatt
+      mode: password
+      username: ${GROWATT_USERNAME}
+      password: ${GROWATT_PASSWORD}
+    tariff_per_kwh: 0.55
+    currency: ILS
