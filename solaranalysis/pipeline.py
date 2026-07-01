@@ -16,6 +16,7 @@ def _normalize(pd: PlantData) -> PlantData:
 def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
                  adapter_factory=get_adapter, analyzer=run_analysis) -> dict:
     plants: list[PlantData] = []
+    skipped: list[dict] = []
     for pc in cfg.plants:
         try:
             adapter = adapter_factory(pc.auth, session_store)
@@ -26,8 +27,10 @@ def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
                 plants.append(_normalize(pd))
         except Exception as e:  # isolate per-plant failures
             print(f"[warn] plant {pc.name!r} unavailable: {e}")
+            skipped.append({"name": pc.name, "reason": str(e)})
     report_md = analyzer(plants, time_range, cfg) if plants else "No plant data available."
     data_block = build_data_block(plants, time_range,
                                   {"currency": plants[0].currency if plants else None})
     return {"report_md": report_md, "plants": plants,
-            "verify_missing": verify_numbers(report_md, data_block)}
+            "verify_missing": verify_numbers(report_md, data_block),
+            "skipped_plants": skipped}

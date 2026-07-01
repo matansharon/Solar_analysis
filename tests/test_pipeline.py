@@ -38,3 +38,22 @@ def test_pipeline_survives_one_plant_failure(tmp_path):
     res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
     names = [p.plant_name for p in res["plants"]]
     assert "Good" in names and "Bad" not in names
+
+def test_pipeline_reports_skipped_plants(tmp_path):
+    class Boom:
+        def login(self): raise RuntimeError("auth failed")
+        def fetch(self, tr): raise RuntimeError("nope")
+    cfg = AppConfig(plants=[
+        PlantConfig("Bad", AuthConfig("growatt", username="bad", password="p")),
+        PlantConfig("Good", AuthConfig("growatt", username="good", password="p")),
+    ])
+    ss = SessionStore(str(tmp_path))
+    seq = [Boom(), FakeAdapter(_pd("Good"))]   # dispatched in plant order
+    def factory(auth, store): return seq.pop(0)
+    def analyzer(plants, tr, c, client=None): return "## Production & Performance\nok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    names = [p.plant_name for p in res["plants"]]
+    assert "Good" in names
+    assert len(res["skipped_plants"]) == 1
+    assert res["skipped_plants"][0]["name"] == "Bad"
+    assert isinstance(res["skipped_plants"][0]["reason"], str) and res["skipped_plants"][0]["reason"]
