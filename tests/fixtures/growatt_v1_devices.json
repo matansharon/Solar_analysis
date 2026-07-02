@@ -1,0 +1,27 @@
+{
+  "count": 2,
+  "devices": [
+    {
+      "device_sn": "ZT00100001",
+      "last_update_time": "2026-07-01 12:00:00",
+      "model": "A0B0D0T0PFU1M2S1",
+      "lost": false,
+      "status": 1,
+      "manufacturer": "Growatt",
+      "device_id": 116,
+      "datalogger_sn": "CRAZT00001",
+      "type": 1
+    },
+    {
+      "device_sn": "ZT00100002",
+      "last_update_time": "2026-06-28 09:00:00",
+      "model": "A0B0D0T0PFU1M2S1",
+      "lost": true,
+      "status": 0,
+      "manufacturer": "Growatt",
+      "device_id": 117,
+      "datalogger_sn": "CRAZT00002",
+      "type": 1
+    }
+  ]
+}

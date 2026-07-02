@@ -1,14 +1,51 @@
 from __future__ import annotations
 from ..core.schema import (
-    PlantData, Metric, Device, Alert, DeviceStatus, AlertSeverity, TimeRange,
+    PlantData, Metric, Device, DeviceStatus, TimeRange,
 )
-from ..core import units
 from .base import SolarPortalAdapter, AdapterError
 
-_STATUS_MAP = {1: DeviceStatus.ONLINE, 0: DeviceStatus.OFFLINE, -1: DeviceStatus.OFFLINE,
-               2: DeviceStatus.STANDBY, 3: DeviceStatus.FAULT}
+# ---------------------------------------------------------------------------
+# Growatt OpenAPI v1 mapper
+#
+# Classic Growatt mobile login (newTwoLoginAPI.do) is 403-blocked, and the
+# maintained growattServer 2.x library requires Python 3.11/3.12 (this
+# codebase targets 3.10). This adapter instead talks to the OpenAPI v1 REST
+# endpoints via `_growatt_v1.GrowattV1Client`, authenticating with a
+# ShinePhone-app API token sent as the `token` HTTP header.
+#
+# CONFIRM LIVE — field names below are the best-known v1 field names from
+# public docs/probes but have NOT been validated against a real token yet.
+# Every assumed field + unit is called out at its use site. The mapper is
+# written defensively (`.get()` everywhere, no KeyError risk) so it degrades
+# to `None`/"not_exposed" rather than crashing if a name is wrong; the first
+# live run against a real plant is the real validation and may require
+# renaming a handful of `.get()` keys.
+#
+# plant/details (CONFIRM LIVE names):
+#   - name                    -> plant name
+#   - peak_power_actual       -> peak power; CONFIRM LIVE unit, assumed kWp
+#                                (nominal_power is an alternate name seen in
+#                                other Growatt API generations; not used here
+#                                unless peak_power_actual is absent)
+#   - city, country           -> location
+#   - latitude, longitude     -> assumed decimal degrees as strings
+#   - create_date             -> install date
+#   - currency                -> ISO currency code
+#
+# plant/data (CONFIRM LIVE names):
+#   - today_energy, monthly_energy, total_energy -> CONFIRM LIVE unit,
+#                                assumed already kWh (no conversion applied)
+#   - current_power           -> CONFIRM LIVE unit: assumed kW (NOT W); if a
+#                                live call shows it's actually W this needs a
+#                                units.w_to_kw() conversion added
+#   - co2                     -> optional; treated "not_exposed" when absent
+# ---------------------------------------------------------------------------
+
+_STATUS_MAP = {1: DeviceStatus.ONLINE, 0: DeviceStatus.OFFLINE}  # CONFIRM LIVE: full status code table
+
 
 def _f(x):
+    """String/empty -> float, else None. Defensive against '' and missing fields."""
     if x is None:
         return None
     s = str(x).strip()
@@ -19,56 +56,68 @@ def _f(x):
     except ValueError:
         return None
 
-def map_growatt_plant(plant_meta: dict, energy: dict, devices: list[dict]) -> PlantData:
-    kwp = units.w_to_kw(_f(plant_meta.get("nominalPower")))
+
+def map_growatt_v1(details: dict, overview: dict, devices: list[dict]) -> PlantData:
+    details = details or {}
+    overview = overview or {}
+    devices = devices or []
+
+    peak_power = details.get("peak_power_actual")
+    if peak_power is None:
+        peak_power = details.get("nominal_power")  # CONFIRM LIVE: alternate field name
+
     pd = PlantData(
-        plant_id=f"growatt-{plant_meta.get('id')}",
+        plant_id=f"growatt-{details.get('plant_id')}",
         source_platform="growatt",
-        source_plant_id=str(plant_meta.get("id")),
-        plant_name=plant_meta.get("plantName") or "Growatt plant",
-        peak_power_kwp=Metric(kwp, "kWp"),
-        location_country=plant_meta.get("country"),
-        latitude=_f(plant_meta.get("lat")),
-        longitude=_f(plant_meta.get("lon")),
-        install_date=plant_meta.get("createDate") or None,
-        currency=plant_meta.get("currency"),
+        source_plant_id=str(details.get("plant_id")) if details.get("plant_id") is not None else "",
+        plant_name=details.get("name") or "Growatt plant",
+        peak_power_kwp=Metric(_f(peak_power), "kWp"),  # CONFIRM LIVE unit
+        location_country=details.get("country"),
+        latitude=_f(details.get("latitude")),
+        longitude=_f(details.get("longitude")),
+        install_date=details.get("create_date") or None,
+        currency=details.get("currency"),
     )
-    pd.energy_today_kwh = Metric(_f(energy.get("eToday")), "kWh")       # already kWh
-    pd.energy_month_kwh = Metric(_f(energy.get("eMonth")), "kWh")
-    pd.energy_lifetime_kwh = Metric(_f(energy.get("eTotal")), "kWh")
-    # Growatt has no calendar-year total; eTotal is lifetime.
+
+    pd.energy_today_kwh = Metric(_f(overview.get("today_energy")), "kWh")      # CONFIRM LIVE: already kWh
+    pd.energy_month_kwh = Metric(_f(overview.get("monthly_energy")), "kWh")    # CONFIRM LIVE: already kWh
+    pd.energy_lifetime_kwh = Metric(_f(overview.get("total_energy")), "kWh")   # CONFIRM LIVE: already kWh
+    # Growatt v1 has no calendar-year total in plant/data.
     pd.energy_year_kwh = Metric(None, "kWh", data_source_status="not_exposed")
-    pd.current_power_kw = Metric(units.w_to_kw(_f(energy.get("currentPower"))), "kW")
+    pd.current_power_kw = Metric(_f(overview.get("current_power")), "kW")     # CONFIRM LIVE: unit assumed kW, not W
+
+    co2_raw = overview.get("co2")
+    pd.co2_avoided_kg = Metric(
+        _f(co2_raw),
+        "kg",
+        data_source_status="ok" if co2_raw not in (None, "") else "not_exposed",
+    )
+
     for d in devices:
-        status_int = d.get("status")
-        try:
-            status = _STATUS_MAP.get(int(status_int), DeviceStatus.UNKNOWN)
-        except (TypeError, ValueError):
-            status = DeviceStatus.UNKNOWN
+        lost = bool(d.get("lost"))
+        if lost:
+            status = DeviceStatus.OFFLINE
+        else:
+            status_int = d.get("status")
+            try:
+                status = _STATUS_MAP.get(int(status_int), DeviceStatus.UNKNOWN)  # CONFIRM LIVE: full status table
+            except (TypeError, ValueError):
+                status = DeviceStatus.UNKNOWN
         pd.devices.append(Device(
-            device_id=str(d.get("deviceSn")),
+            device_id=str(d.get("device_sn")),
             device_type="inverter",
-            model=d.get("deviceModel"),
-            manufacturer="Growatt",
+            model=d.get("model"),
+            manufacturer=d.get("manufacturer") or "Growatt",
             status=status,
-            current_power_kw=units.w_to_kw(_f(d.get("pac"))),
-            energy_lifetime_kwh=_f(d.get("eTotal")),  # per-device eTotal is kWh
-            temperature_c=_f(d.get("temperature")),
-            last_seen_local=d.get("lastUpdateTime"),
+            last_seen_local=d.get("last_update_time"),
         ))
-        warn = str(d.get("warnCode") or "0").strip()
-        if warn not in ("", "0"):
-            sev = AlertSeverity.ERROR if status == DeviceStatus.FAULT else AlertSeverity.WARNING
-            pd.alerts.append(Alert(
-                alert_id=f"{d.get('deviceSn')}-{warn}",
-                severity=sev, code=warn,
-                message=d.get("warnText") or d.get("faultText"),
-                timestamp_local=d.get("lastUpdateTime"),
-                resolved=False,
-            ))
-    pd.co2_avoided_kg = Metric(_f(energy.get("co2")), "kg",
-                               data_source_status="ok" if energy.get("co2") else "not_exposed")
+
+    # v1 device/list carries no fault/warning payload in the confirmed shape;
+    # alerts are not populated from this endpoint.
+    pd.alerts = []
+
     return pd
+
 
 class GrowattAdapter(SolarPortalAdapter):
     platform = "growatt"
@@ -76,47 +125,36 @@ class GrowattAdapter(SolarPortalAdapter):
     def __init__(self, auth, session_store, client=None):
         super().__init__(auth, session_store)
         self._client = client
-        self._user_id = None
-
-    def _ensure_client(self):
-        if self._client is None:
-            import growattServer  # imported lazily so tests don't need it
-            self._client = growattServer.GrowattApi()
-        return self._client
 
     def login(self) -> None:
-        client = self._ensure_client()
-        if self._user_id is not None:
-            return  # already authenticated in this process
-        if not self.sessions.can_poll("growatt", 300):
-            raise AdapterError("growatt: poll guard active (min 5 min between logins)")
-        resp = client.login(self.auth.username, self.auth.password)
-        self.sessions.mark_poll("growatt")
-        if not resp or not resp.get("success"):
-            raise AdapterError("growatt: login failed")
-        self._user_id = resp["user"]["id"]
+        if self.auth.mode != "token":
+            raise AdapterError(
+                "growatt: classic password login is blocked by Growatt; use mode=token "
+                "with a ShinePhone API token"
+            )
+        if not self.auth.token:
+            raise AdapterError("growatt: no token configured")
+        if self._client is None:
+            from ._growatt_v1 import GrowattV1Client
+            self._client = GrowattV1Client(self.auth.token)
 
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
-        client = self._ensure_client()
-        if self._user_id is None:
+        if self._client is None:
             self.login()
-        plants = client.plant_list(self._user_id).get("data", [])
+
+        pl = self._client.plant_list()
+        if isinstance(pl, dict):
+            plants = pl.get("plants") if pl.get("plants") is not None else pl.get("data", [])  # CONFIRM LIVE: response key
+        elif isinstance(pl, list):
+            plants = pl
+        else:
+            plants = []
+
         results = []
-        for p in plants:
-            pid = p.get("plantId") or p.get("id")
-            meta = client.plant_info(pid)
-            energy = {
-                "eToday": meta.get("eToday"), "eMonth": meta.get("eMonth"),
-                "eTotal": meta.get("eTotal"), "currentPower": meta.get("currentPower"),
-                "co2": meta.get("co2"),
-            }
-            plant_meta = {
-                "id": pid, "plantName": p.get("plantName"),
-                "nominalPower": meta.get("nominalPower"), "country": meta.get("country"),
-                "city": meta.get("city"), "lat": meta.get("plant_lat"),
-                "lon": meta.get("plant_lng"), "createDate": meta.get("createDate"),
-                "currency": meta.get("currency"),
-            }
-            devices = client.device_list(pid).get("devices", []) if hasattr(client, "device_list") else []
-            results.append(map_growatt_plant(plant_meta, energy, devices))
+        for plant in plants or []:
+            pid = plant.get("plant_id") or plant.get("id")
+            details = self._client.plant_details(pid)
+            overview = self._client.plant_energy_overview(pid)
+            devices = (self._client.device_list(pid) or {}).get("devices", [])
+            results.append(map_growatt_v1(details, overview, devices))
         return results

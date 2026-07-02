@@ -1,0 +1,12 @@
+{
+  "plant_id": "9001",
+  "name": "Growatt Roof",
+  "peak_power_actual": "100.0",
+  "city": "Karmiel",
+  "country": "Israel",
+  "latitude": "",
+  "longitude": "",
+  "create_date": "2022-05-01",
+  "currency": "ILS",
+  "timezone": "2"
+}

@@ -5,16 +5,18 @@ plants:
   - name: SolarEdge Roof
     auth:
       platform: solaredge
-      mode: password
-      username: ${SOLAREDGE_USERNAME}
-      password: ${SOLAREDGE_PASSWORD}
+      mode: api_key
+      api_key: ${SOLAREDGE_API_KEY}
+      # password-mode fallback (requires one-time browser login, see README):
+      # mode: password
+      # username: ${SOLAREDGE_USERNAME}
+      # password: ${SOLAREDGE_PASSWORD}
     tariff_per_kwh: 0.55
     currency: ILS
   - name: Growatt Roof
     auth:
       platform: growatt
-      mode: password
-      username: ${GROWATT_USERNAME}
-      password: ${GROWATT_PASSWORD}
+      mode: token
+      token: ${GROWATT_TOKEN}
     tariff_per_kwh: 0.55
     currency: ILS

@@ -30,11 +30,13 @@ cp config.example.yaml config.yaml
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 
-SOLAREDGE_USERNAME=your-email@example.com
-SOLAREDGE_PASSWORD=your-password
+# SolarEdge: Account/Site Admin -> API Access (or ask your installer)
+SOLAREDGE_API_KEY=your-api-key
 
-GROWATT_USERNAME=your-username
-GROWATT_PASSWORD=your-password
+# Growatt: classic email/password login is blocked by Growatt (403 on the
+# mobile login endpoint). Generate a ShinePhone app API token instead:
+# Me -> tap username -> API Token -> Reopen.
+GROWATT_TOKEN=your-openapi-v1-token
 ```
 
 **`config.yaml` (edit to add your plants)**
@@ -46,26 +48,27 @@ plants:
   - name: SolarEdge Roof
     auth:
       platform: solaredge
-      mode: password
-      username: ${SOLAREDGE_USERNAME}
-      password: ${SOLAREDGE_PASSWORD}
+      mode: api_key
+      api_key: ${SOLAREDGE_API_KEY}
     tariff_per_kwh: 0.55
     currency: ILS
   - name: Growatt Roof
     auth:
       platform: growatt
-      mode: password
-      username: ${GROWATT_USERNAME}
-      password: ${GROWATT_PASSWORD}
+      mode: token
+      token: ${GROWATT_TOKEN}
     tariff_per_kwh: 0.55
     currency: ILS
 ```
 
 Credentials are read from `.env` via variable substitution (`${VARIABLE_NAME}`).
 
-### 3. One-Time SolarEdge Login (Browser)
+### 3. One-Time SolarEdge Login (Browser) — only needed for password mode
 
-SolarEdge's official API requires either an API key or a session cookie. For password-based login, you must run a headed Playwright browser to complete any login challenges (CAPTCHAs, OTP) and capture the session cookie:
+`mode: api_key` (shown above) needs no browser login at all — this is the primary,
+recommended path. If you instead use `mode: password`, SolarEdge requires a headed
+Playwright browser to complete any login challenges (CAPTCHAs, OTP) and capture a
+session cookie:
 
 ```bash
 python -m solaranalysis.tools.se_login
@@ -73,7 +76,9 @@ python -m solaranalysis.tools.se_login
 
 This opens a browser window, logs in, and caches a ~20-day session cookie in `.session_cache/`. If your cookie expires, re-run this command.
 
-Growatt does not require browser login; it uses direct API calls.
+Growatt does not use browser login. Classic email/password login against Growatt's
+mobile API is blocked (403) — see the token instructions above; `mode: token` talks
+directly to the Growatt OpenAPI v1 with plain HTTP calls, no login step required.
 
 ## Running the Analysis
 
@@ -111,45 +116,39 @@ Open the HTML file in your browser to view the styled analysis report.
 ## Rate Limits & Warnings
 
 ### Growatt
-- **Minimum 5 minutes** between consecutive polls.
-- Polling faster risks a 24-hour account lockout. If you hit the rate limit, you will see: `[warn] growatt: poll guard active (min 5 min between logins)`.
+- The OpenAPI v1 token path has no client-side poll guard; be reasonable with
+  polling frequency to avoid triggering Growatt-side throttling.
+- Classic email/password login is **blocked** (403) — `mode: password` for
+  Growatt is no longer supported; use `mode: token` (see Setup above).
 
 ### SolarEdge
-- Official Monitoring API: **300 requests per day**.
-- High-frequency polling will exhaust the quota.
-
-Both adapters enforce client-side guards to prevent lockouts.
+- `mode: api_key` uses the official Monitoring API: **300 requests per day**.
+  High-frequency polling will exhaust the quota.
+- `mode: password` (fallback) enforces a client-side session-cache guard to
+  avoid excessive logins.
 
 ## Future Enhancements
 
 ### SMA Sunny Portal (Phase 2)
 SMA Sunny Portal adapter is planned for future releases. Currently, only SolarEdge and Growatt are supported.
 
-### Token / API Key Auth
-For more reliable authentication without browser login:
-
-- **Growatt**: Use an OpenAPI token instead of password. Update `config.yaml` to:
-  ```yaml
-  auth:
-    platform: growatt
-    mode: token
-    token: your-openapi-token
-  ```
-
-- **SolarEdge**: Use an API key instead of password. Update `config.yaml` to:
-  ```yaml
-  auth:
-    platform: solaredge
-    mode: api_key
-    api_key: your-api-key
-  ```
-
-These modes skip the browser login step entirely and reduce authentication complexity.
+### Field mapping confirmation (Growatt)
+The Growatt v1 mapper (`solaranalysis/adapters/growatt.py`) uses defensive
+`.get()` lookups for `plant/details` and `plant/data` field names, since the
+exact field names/units for peak power and current power were not confirmed
+against a live account at implementation time (see `CONFIRM LIVE` comments in
+the source). These are expected to be finalized on the first live run with a
+real token; if a field silently maps to `None`, check the comment block at
+the top of `growatt.py` and adjust the `.get()` key to match the live payload.
 
 ## Troubleshooting
 
 ### "no cookie captured" or "no cached session cookie"
-Run `python -m solaranalysis.tools.se_login` again to refresh the session cookie.
+Run `python -m solaranalysis.tools.se_login` again to refresh the session cookie (password mode only).
+
+### "growatt: classic password login is blocked..."
+Switch Growatt to `mode: token` and set `GROWATT_TOKEN` from the ShinePhone app
+(Me -> tap username -> API Token -> Reopen). See Setup above.
 
 ### Plants unavailable / fetch errors
 Check your credentials in `.env` and confirm your portal account has access to the plants listed in `config.yaml`.
@@ -188,7 +187,7 @@ pytest
 
 Run a single test:
 ```bash
-pytest tests/test_growatt_adapter.py -v
+pytest tests/test_growatt_v1.py -v
 ```
 
 ## License
