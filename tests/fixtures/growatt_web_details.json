@@ -1,0 +1,18 @@
+{
+  "country": "Israel",
+  "city": "ברעם",
+  "timezone": "2",
+  "co2": "3365.6",
+  "creatDate": "2026-06-05",
+  "fixedPowerPrice": "1.2",
+  "id": "10950561",
+  "lat": "33.0603852",
+  "lng": "35.4331615",
+  "nominalPower": "50",
+  "eTotal": "8414",
+  "tree": "463",
+  "coal": "3365.6",
+  "moneyUnit": "NIS",
+  "plantName": "Elcam Baram",
+  "moneyUnitText": "₪"
+}

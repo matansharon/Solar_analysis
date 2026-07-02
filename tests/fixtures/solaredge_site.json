@@ -1,0 +1,19 @@
+{
+  "solarFieldId": 2387929,
+  "status": "ACTIVE",
+  "name": "קיבוץ ברעם - מוסך וסככת טרקטורים",
+  "peakPower": 208.39,
+  "address": "ברעם",
+  "accountId": 64348,
+  "alertsCount": 0,
+  "longitude": 35.43666822753907,
+  "latitude": 33.05890706445657,
+  "installationDate": "2021-07-27T00:00:00Z",
+  "siteMagnitude": "COMMERCIAL",
+  "country": "Israel",
+  "countryCode": "IL",
+  "timeZone": "Asia/Jerusalem",
+  "accountName": "Golan Solar",
+  "inverterCount": 3,
+  "optimizerCount": 309
+}
