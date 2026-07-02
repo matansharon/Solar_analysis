@@ -239,10 +239,18 @@ class GrowattAdapter(SolarPortalAdapter):
             results = []
             for pl in plants:
                 pid = pl.get("id")
-                details = (bs.post_json(f"{_HOST}/panel/getPlantData?plantId={pid}") or {}).get("obj", {})
-                totals = (bs.post_json(f"{_HOST}/panel/max/getMAXTotalData?plantId={pid}") or {}).get("obj", {})
-                devices = (bs.post_json(f"{_HOST}/panel/getDevicesByPlant?plantId={pid}") or {}).get("obj", {})
-                results.append(map_growatt_web(pl, details, totals, devices))
+                # Per-plant isolation: one plant's transient request failure
+                # must not discard the whole account. Fall back to the plant's
+                # list entry (name/id) with a data-quality flag.
+                try:
+                    details = (bs.post_json(f"{_HOST}/panel/getPlantData?plantId={pid}") or {}).get("obj", {})
+                    totals = (bs.post_json(f"{_HOST}/panel/max/getMAXTotalData?plantId={pid}") or {}).get("obj", {})
+                    devices = (bs.post_json(f"{_HOST}/panel/getDevicesByPlant?plantId={pid}") or {}).get("obj", {})
+                    results.append(map_growatt_web(pl, details, totals, devices))
+                except Exception as e:
+                    pd = map_growatt_web(pl, {}, {}, {})
+                    pd.data_quality_flags.append(f"growatt: live fetch failed for this plant ({e})")
+                    results.append(pd)
             return results
 
     def _fetch_token(self) -> list[PlantData]:
@@ -256,8 +264,13 @@ class GrowattAdapter(SolarPortalAdapter):
         results = []
         for plant in plants or []:
             pid = plant.get("plant_id") or plant.get("id")
-            details = self._client.plant_details(pid)
-            overview = self._client.plant_energy_overview(pid)
-            devices = (self._client.device_list(pid) or {}).get("devices", [])
-            results.append(map_growatt_v1(details, overview, devices))
+            try:
+                details = self._client.plant_details(pid)
+                overview = self._client.plant_energy_overview(pid)
+                devices = (self._client.device_list(pid) or {}).get("devices", [])
+                results.append(map_growatt_v1(details, overview, devices))
+            except Exception as e:
+                pd = map_growatt_v1({"plant_id": pid}, {}, [])
+                pd.data_quality_flags.append(f"growatt: token fetch failed for this plant ({e})")
+                results.append(pd)
         return results

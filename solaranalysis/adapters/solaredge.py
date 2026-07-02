@@ -159,17 +159,38 @@ class SolarEdgeAdapter(SolarPortalAdapter):
             bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
             bs.page.get_by_role("button", name="Sign in").first.click()
             bs.page.wait_for_url("**/one#/site-list", timeout=45000)
-            bs.page.wait_for_timeout(6000)
+
+            # Poll until both fleet responses have arrived, rather than a fixed
+            # wait: a slow sitesMeasurements would otherwise leave energy null
+            # with no signal. searchSites and sitesMeasurements are independent.
+            for _ in range(40):  # up to ~20s
+                if store.get(_SEARCH) and store.get(_MEAS):
+                    break
+                bs.page.wait_for_timeout(500)
 
             sites = (store.get(_SEARCH) or {}).get("page", [])
-            meas_by_id = {m.get("solarFieldId"): m for m in (store.get(_MEAS) or [])}
             if not sites:
                 raise AdapterError("solaredge: site list did not load (no searchSites response)")
+            meas_by_id = {m.get("solarFieldId"): m for m in (store.get(_MEAS) or [])}
+            meas_loaded = bool(meas_by_id)
 
             results = []
             for site in sites:
                 sid = site.get("solarFieldId")
-                env = bs.get_json(f"{_BASE}/services/dashboard/environmental-benefits/sites/{sid}")
-                live = bs.get_json(f"{_BASE}/services/dashboard/live-power/sites/{sid}")
-                results.append(map_solaredge_fleet(site, meas_by_id.get(sid, {}), env, live))
+                # Per-site enrichment is best-effort: a transient failure on one
+                # site must not discard the whole account (the pipeline isolates
+                # per account, not per site).
+                try:
+                    env = bs.get_json(f"{_BASE}/services/dashboard/environmental-benefits/sites/{sid}")
+                except Exception:
+                    env = None
+                try:
+                    live = bs.get_json(f"{_BASE}/services/dashboard/live-power/sites/{sid}")
+                except Exception:
+                    live = None
+                pd = map_solaredge_fleet(site, meas_by_id.get(sid, {}), env, live)
+                if not meas_loaded:
+                    pd.data_quality_flags.append(
+                        "solaredge: sitesMeasurements did not load in time; energy figures unavailable")
+                results.append(pd)
             return results

@@ -79,9 +79,13 @@ class BrowserSession:
             for frag in fragments:
                 if frag in url:
                     try:
-                        store[frag] = resp.json()
+                        val = resp.json()
                     except Exception:
-                        pass  # non-JSON / body unavailable
+                        val = None  # non-JSON / body unavailable
+                    # Ignore empty/None bodies so a late empty response can't
+                    # clobber a good earlier one for the same endpoint.
+                    if val:
+                        store[frag] = val
 
         self.page.on("response", on_response)
         return store
