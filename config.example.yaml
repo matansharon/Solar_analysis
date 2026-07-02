@@ -1,3 +1,6 @@
+## Example config. Copy to config.yaml and fill credentials via .env.
+## All three portals authenticate through a headless browser login using the
+## site owner's username/password — no API key or token required.
 model: null            # null -> auto (sonnet-5, opus for 12mo/all)
 max_input_tokens: 60000
 output_language: en    # en | he
@@ -5,18 +8,24 @@ plants:
   - name: SolarEdge Roof
     auth:
       platform: solaredge
-      mode: api_key
-      api_key: ${SOLAREDGE_API_KEY}
-      # password-mode fallback (requires one-time browser login, see README):
-      # mode: password
-      # username: ${SOLAREDGE_USERNAME}
-      # password: ${SOLAREDGE_PASSWORD}
+      mode: password
+      username: ${SOLAREDGE_USERNAME}
+      password: ${SOLAREDGE_PASSWORD}
     tariff_per_kwh: 0.55
     currency: ILS
   - name: Growatt Roof
     auth:
       platform: growatt
-      mode: token
-      token: ${GROWATT_TOKEN}
+      mode: password       # or: mode: token  (token: ${GROWATT_TOKEN})
+      username: ${GROWATT_USERNAME}
+      password: ${GROWATT_PASSWORD}
+    tariff_per_kwh: 0.55
+    currency: ILS
+  - name: SMA Sunny Portal
+    auth:
+      platform: sma
+      mode: password
+      username: ${SMA_USERNAME}
+      password: ${SMA_PASSWORD}
     tariff_per_kwh: 0.55
     currency: ILS

@@ -22,16 +22,23 @@ def pick_model(cfg: AppConfig, time_range: TimeRange) -> str:
 def _summary(pd: PlantData) -> dict:
     kwp = pd.peak_power_kwp.value
     life = pd.energy_lifetime_kwh.value
+    today = pd.energy_today_kwh.value
+    month = pd.energy_month_kwh.value
     return {
         "plant_id": pd.plant_id,
         "plant_name": pd.plant_name,
         "vendor": pd.source_platform,
         "kwp": kwp,
-        "energy_today_kwh": pd.energy_today_kwh.value,
-        "energy_month_kwh": pd.energy_month_kwh.value,
+        "install_date": pd.install_date,
+        "energy_today_kwh": today,
+        "energy_month_kwh": month,
         "energy_year_kwh": pd.energy_year_kwh.value,
         "energy_lifetime_kwh": life,
         "current_power_kw": pd.current_power_kw.value,
+        # Age-fair current-performance metrics (energy over the period / kWp).
+        "specific_yield_today_kwh_per_kwp": units.round_opt(units.specific_yield(today, kwp)),
+        "specific_yield_month_kwh_per_kwp": units.round_opt(units.specific_yield(month, kwp)),
+        # Lifetime yield scales with plant age (see install_date) — not age-fair.
         "specific_yield_lifetime_kwh_per_kwp": units.round_opt(units.specific_yield(life, kwp)),
         "device_count": len(pd.devices),
         "devices_online": sum(1 for d in pd.devices if d.status.value == "online"),
@@ -67,7 +74,10 @@ def build_data_block(plants: list[PlantData], time_range: TimeRange, meta: dict)
 
 def verify_numbers(report_md: str, data_block: str) -> list[str]:
     def _norm(tok):
-        return tok.replace(",", "").rstrip(".")
+        t = tok.replace(",", "")
+        if "." in t:  # canonicalize 189.00 / 189.0 / 189. -> 189
+            t = t.rstrip("0").rstrip(".")
+        return t
     present = {_norm(m) for m in _NUM_RE.findall(data_block)}
     present.discard("")
     present.discard("-")

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "GTO Dalton דלתון",
+    "guid": "cf2dbf6b-ed79-4695-a372-3fad78ff0357",
+    "power_kw": "55.00",
+    "yield_yesterday": "333.23",
+    "yield_today": "345.84",
+    "yield_lastmonth": "9,818.38",
+    "yield_thismonth": "679.07",
+    "lifetime": "1,433,089.88",
+    "sy_thismonth": "12.35",
+    "sy_year": "848.49"
+  },
+  {
+    "name": "GTO baraam (קיבוץ ברעם (אלקם",
+    "guid": "f66ab20d-c3fd-4330-9005-f20c6aa28489",
+    "power_kw": "55.00",
+    "yield_yesterday": "No data",
+    "yield_today": "No data",
+    "yield_lastmonth": "1,248.48",
+    "yield_thismonth": "No data",
+    "lifetime": "1,454,834.59",
+    "sy_thismonth": "No data",
+    "sy_year": "617.79"
+  }
+]

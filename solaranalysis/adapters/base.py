@@ -24,7 +24,8 @@ def get_adapter(auth: AuthConfig, session_store: SessionStore) -> SolarPortalAda
     # imported here to avoid circular imports at module load
     from .solaredge import SolarEdgeAdapter
     from .growatt import GrowattAdapter
-    registry = {"solaredge": SolarEdgeAdapter, "growatt": GrowattAdapter}
+    from .sma import SMAAdapter
+    registry = {"solaredge": SolarEdgeAdapter, "growatt": GrowattAdapter, "sma": SMAAdapter}
     cls = registry.get(auth.platform)
     if cls is None:
         raise AdapterError(f"unknown platform: {auth.platform!r}")

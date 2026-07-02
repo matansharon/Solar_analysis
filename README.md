@@ -1,195 +1,170 @@
 # Solar Analysis
 
-Compare solar plants from SolarEdge and Growatt, normalize the data, and generate an AI-powered HTML analysis report.
+Compare solar plants across **SolarEdge, Growatt, and SMA Sunny Portal**,
+normalize the data into one schema, and generate an AI-powered HTML comparison
+report.
 
 ## Purpose
 
-This tool logs into your SolarEdge and Growatt solar-monitoring portals, fetches plant metrics (energy, power, device status, alerts), normalizes them to a common schema, and uses Claude AI to synthesize a comparison report with insights and recommendations. The analysis is grounded: **all numeric values come from live portal data; Claude only writes the narrative**, eliminating hallucination risk.
+This tool logs into each solar-monitoring portal with the site owner's
+username/password (via a headless browser), fetches plant metrics (energy,
+power, device status, alerts, CO₂, financials), normalizes them to a common
+schema, and uses Claude to synthesize a comparison report with insights and
+recommendations. The analysis is grounded: **all numeric values come from live
+portal data and are computed in Python; Claude only writes the narrative**,
+eliminating hallucinated figures.
+
+## Authentication model
+
+All three portals authenticate the same way — a **headless browser login with
+the owner's username and password**. No API key or token is required.
+
+| Portal | Login | Data source |
+|--------|-------|-------------|
+| SolarEdge | `monitoring.solaredge.com` OAuth form | internal dashboard JSON (`/services/sitelist/*`, `/services/dashboard/*`) |
+| Growatt | `server.growatt.com` form | internal dashboard JSON (`/index/*`, `/panel/*`) |
+| SMA Sunny Portal | SMA ID / Keycloak SSO | server-rendered PV System List table |
+
+Growatt also still supports `mode: token` (OpenAPI v1) as an alternative if you
+prefer a token to the browser login.
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium
 ```
 
-The `playwright` library is needed only for the one-time SolarEdge browser login step (see below); Growatt uses direct API calls.
-
-### 2. Configure Credentials
-
-Copy the example configuration and secrets files:
+### 2. Configure credentials
 
 ```bash
 cp .env.example .env
 cp config.example.yaml config.yaml
 ```
 
-**`.env` (git-ignored; store your secrets here)**
+Put your secrets in `.env` (git-ignored):
+
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 
-# SolarEdge: Account/Site Admin -> API Access (or ask your installer)
-SOLAREDGE_API_KEY=your-api-key
+SOLAREDGE_USERNAME=...
+SOLAREDGE_PASSWORD=...
 
-# Growatt: classic email/password login is blocked by Growatt (403 on the
-# mobile login endpoint). Generate a ShinePhone app API token instead:
-# Me -> tap username -> API Token -> Reopen.
-GROWATT_TOKEN=your-openapi-v1-token
+GROWATT_USERNAME=...
+GROWATT_PASSWORD=...
+
+SMA_USERNAME=...
+SMA_PASSWORD=...
 ```
 
-**`config.yaml` (edit to add your plants)**
-```yaml
-model: null            # null = auto-pick (sonnet-5 for 30d/snapshot; opus for 12mo/all)
-max_input_tokens: 60000
-output_language: en
-plants:
-  - name: SolarEdge Roof
-    auth:
-      platform: solaredge
-      mode: api_key
-      api_key: ${SOLAREDGE_API_KEY}
-    tariff_per_kwh: 0.55
-    currency: ILS
-  - name: Growatt Roof
-    auth:
-      platform: growatt
-      mode: token
-      token: ${GROWATT_TOKEN}
-    tariff_per_kwh: 0.55
-    currency: ILS
-```
+`config.yaml` lists the plants; each references credentials via `${VAR}`
+substitution. See `config.example.yaml` for the full three-portal layout. To
+analyze fewer portals, just delete those plant entries.
 
-Credentials are read from `.env` via variable substitution (`${VARIABLE_NAME}`).
-
-### 3. One-Time SolarEdge Login (Browser) — only needed for password mode
-
-`mode: api_key` (shown above) needs no browser login at all — this is the primary,
-recommended path. If you instead use `mode: password`, SolarEdge requires a headed
-Playwright browser to complete any login challenges (CAPTCHAs, OTP) and capture a
-session cookie:
+## Running the analysis
 
 ```bash
-python -m solaranalysis.tools.se_login
+python -m solaranalysis.cli --range snapshot
 ```
 
-This opens a browser window, logs in, and caches a ~20-day session cookie in `.session_cache/`. If your cookie expires, re-run this command.
+**Arguments**
+- `--config config.yaml` (default) — config file path
+- `--range {snapshot|30d|12mo|all}` (default `30d`) — time range
+- `--out output/<timestamp>` (default) — output directory
+- `--cache-dir .session_cache` (default) — session cache location
 
-Growatt does not use browser login. Classic email/password login against Growatt's
-mobile API is blocked (403) — see the token instructions above; `mode: token` talks
-directly to the Growatt OpenAPI v1 with plain HTTP calls, no login step required.
+The report is written to `output/<YYYYMMDD-HHMMSS>/report.html`.
 
-## Running the Analysis
+**Environment toggles**
+- `SOLAR_HEADLESS=0` — run with a visible browser window (useful to watch a run
+  or solve an unexpected login challenge). Default is headless.
+- On Windows, run with `PYTHONUTF8=1` so Hebrew/RTL plant names print cleanly.
 
-```bash
-python -m solaranalysis.cli --range 30d
-```
+## How it works
 
-**Arguments:**
-- `--config config.yaml` (default) — path to your config file
-- `--range {snapshot|30d|12mo|all}` (default: `30d`) — time range for analysis
-  - `snapshot`: today's data
-  - `30d`: last 30 days
-  - `12mo`: last 12 months
-  - `all`: lifetime
-- `--out output/<timestamp>` (default) — output directory for the HTML report
-- `--cache-dir .session_cache` (default) — where to store session cookies
+1. **Fetch** — each adapter logs in with a headless browser and reads the
+   portal's data (internal JSON for SolarEdge/Growatt; the PV System List table
+   for SMA). A per-plant failure is isolated and listed under "Unavailable
+   Plants" rather than failing the whole run.
+2. **Normalize** — data is mapped to a common `PlantData` schema (energy, power,
+   devices, alerts, CO₂, financials) and validated (data-quality flags).
+3. **Analyze** — Python computes every figure, including age-fair
+   same-period specific yield (energy ÷ kWp). Claude receives the numbers plus a
+   grounding prompt and writes the four report sections.
+4. **Report** — the narrative is rendered into a self-contained styled HTML file.
 
-The report is written to `output/<YYYYMMDD-HHMMSS>/report.html` and printed to stdout:
+**Key guarantee:** Python computes all numbers; Claude writes only the
+narrative, so figures cannot be hallucinated. A post-generation `verify_numbers`
+check flags any figure in the narrative not traceable to the data block
+(rounded/derived deltas may legitimately appear).
 
-```
-Report written: output/20250701-152345/report.html
-```
+## Data coverage notes
 
-Open the HTML file in your browser to view the styled analysis report.
+Each portal exposes a different subset; missing metrics are marked
+`not_exposed` and shown as "not reported" in the report rather than guessed.
 
-## How It Works
+- **SolarEdge** — energy today/month/year/lifetime (kWh), CO₂ & trees, inverter
+  count (online-status inferred from the site's ACTIVE state), alert count,
+  current power. No per-inverter serials or revenue at fleet level.
+- **Growatt** — energy today & lifetime (kWh), lifetime revenue, CO₂, trees,
+  inverter status (decoded best-effort). Monthly/yearly energy and current
+  power are not exposed by the dashboard endpoints used.
+- **SMA** — energy today/this-month/lifetime and specific yield from the PV
+  System List. No device inventory, alerts, CO₂, or revenue in that view.
 
-1. **Fetch**: Each adapter (SolarEdge, Growatt) logs in and fetches plant metrics.
-2. **Normalize**: Data is mapped to a common schema (energy, power, devices, alerts, CO₂).
-3. **Analyze**: Metrics and structured data are sent to Claude AI along with a grounding prompt.
-4. **Report**: Claude synthesizes insights (efficiency, trends, faults) into narrative sections, which are rendered as styled HTML.
+## Future enhancements
 
-**Key guarantee:** Python computes all numeric values from live portal data. Claude reads the numbers and writes only the narrative, so no figures are hallucinated.
-
-## Rate Limits & Warnings
-
-### Growatt
-- The OpenAPI v1 token path has no client-side poll guard; be reasonable with
-  polling frequency to avoid triggering Growatt-side throttling.
-- Classic email/password login is **blocked** (403) — `mode: password` for
-  Growatt is no longer supported; use `mode: token` (see Setup above).
-
-### SolarEdge
-- `mode: api_key` uses the official Monitoring API: **300 requests per day**.
-  High-frequency polling will exhaust the quota.
-- `mode: password` (fallback) enforces a client-side session-cache guard to
-  avoid excessive logins.
-
-## Future Enhancements
-
-### SMA Sunny Portal (Phase 2)
-SMA Sunny Portal adapter is planned for future releases. Currently, only SolarEdge and Growatt are supported.
-
-### Field mapping confirmation (Growatt)
-The Growatt v1 mapper (`solaranalysis/adapters/growatt.py`) uses defensive
-`.get()` lookups for `plant/details` and `plant/data` field names, since the
-exact field names/units for peak power and current power were not confirmed
-against a live account at implementation time (see `CONFIRM LIVE` comments in
-the source). These are expected to be finalized on the first live run with a
-real token; if a field silently maps to `None`, check the comment block at
-the top of `growatt.py` and adjust the `.get()` key to match the live payload.
+- **Time series** — per-plant daily/monthly energy series (for trend and
+  worst-day anomaly detection) beyond the current summary metrics. SolarEdge
+  exposes a range energy endpoint; Growatt/SMA need their history endpoints
+  wired.
+- **SMA depth** — device inventory and per-plant detail via the CSV download /
+  per-plant pages, beyond the fleet list.
 
 ## Troubleshooting
 
-### "no cookie captured" or "no cached session cookie"
-Run `python -m solaranalysis.tools.se_login` again to refresh the session cookie (password mode only).
+- **A plant is "unavailable"** — check its username/password in `.env` and that
+  the account can see the plant. Re-run with `SOLAR_HEADLESS=0` to watch the
+  login and spot a challenge (CAPTCHA/OTP).
+- **"[note] N report figures not found verbatim"** — the anti-hallucination
+  check; usually rounded or derived values (deltas, sums) and plant IDs, not
+  errors. Investigate only if a headline figure looks wrong.
+- **Blank/short report** — if all plants failed to fetch, the report says "No
+  plant data available"; fix credentials/connectivity and re-run.
 
-### "growatt: classic password login is blocked..."
-Switch Growatt to `mode: token` and set `GROWATT_TOKEN` from the ShinePhone app
-(Me -> tap username -> API Token -> Reopen). See Setup above.
-
-### Plants unavailable / fetch errors
-Check your credentials in `.env` and confirm your portal account has access to the plants listed in `config.yaml`.
-
-### "[warn] X report numbers not found in DATA"
-Some metrics may be unavailable on specific portals (e.g., SolarEdge does not expose alerts or CO₂ via the official API). The analysis will note missing sections.
-
-## Project Structure
+## Project structure
 
 ```
 solaranalysis/
 ├── cli.py                 # Entry point
-├── config.py              # Config loading & validation
-├── pipeline.py            # Data fetch → normalize → analyze → report
+├── config.py              # Config loading & ${ENV} substitution
+├── pipeline.py            # fetch → normalize → analyze → report
 ├── core/
-│   ├── schema.py          # Common data model (PlantData, Metric, Device, etc.)
-│   ├── session_store.py   # Cookie/session caching
+│   ├── schema.py          # Common data model (PlantData, Metric, Device, …)
+│   ├── analyze.py         # Data block, model pick, verify_numbers, Claude call
+│   ├── rollup.py          # Time-series rollups
 │   ├── report.py          # HTML rendering
-│   └── units.py           # Unit conversions (W→kW, Wh→kWh, etc.)
+│   ├── units.py           # W→kW, Wh→kWh, specific yield, …
+│   └── session_store.py   # Session caching
 ├── adapters/
-│   ├── base.py            # SolarPortalAdapter interface
-│   ├── solaredge.py       # SolarEdge implementation
-│   └── growatt.py         # Growatt implementation
-└── tools/
-    └── se_login.py        # One-time SolarEdge browser login
+│   ├── base.py            # SolarPortalAdapter interface + registry
+│   ├── _browser.py        # Shared headless Playwright session helper
+│   ├── solaredge.py       # SolarEdge (browser + internal JSON)
+│   ├── growatt.py         # Growatt (browser + internal JSON; token alt)
+│   ├── _growatt_v1.py     # Growatt OpenAPI v1 client (token mode)
+│   └── sma.py             # SMA Sunny Portal (table read)
+└── prompts/system.txt     # Grounding contract for Claude
 tests/
-└── (unit & integration tests)
+└── (unit tests: pure mappers, analyze, pipeline, …)
 ```
 
 ## Development
 
-Run tests:
 ```bash
-pytest
+python -m pytest -q
 ```
 
-Run a single test:
-```bash
-pytest tests/test_growatt_v1.py -v
-```
-
-## License
-
-(Add your license here if applicable.)
+The Playwright login/fetch glue is validated by live runs; unit tests cover the
+pure mappers (raw payload → `PlantData`) and the analysis/report layers.
