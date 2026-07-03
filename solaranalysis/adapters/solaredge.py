@@ -30,10 +30,7 @@ _BASE = "https://monitoring.solaredge.com"
 
 
 def _num(x):
-    try:
-        return float(x)
-    except (TypeError, ValueError):
-        return None
+    return units.to_float(x)
 
 
 def _num2(x):
@@ -151,14 +148,25 @@ class SolarEdgeAdapter(SolarPortalAdapter):
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         self.login()
         from ._browser import BrowserSession
-        with BrowserSession() as bs:
+        state = self._load_session()
+        with BrowserSession(storage_state=state) as bs:
             store = bs.capture([_SEARCH, _MEAS])
             bs.page.goto(f"{_BASE}/", wait_until="domcontentloaded")
-            bs.page.get_by_role("button", name="Log in").click()
-            bs.page.get_by_role("textbox", name="Email address").fill(self.auth.username)
-            bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-            bs.page.get_by_role("button", name="Sign in").first.click()
-            bs.page.wait_for_url("**/one#/site-list", timeout=45000)
+            logged_in = False
+            if state:
+                # A restored session skips the login form entirely; on an
+                # expired session we time out here and log in normally.
+                try:
+                    bs.page.wait_for_url("**/one#/site-list", timeout=10000)
+                    logged_in = True
+                except Exception:
+                    logged_in = False
+            if not logged_in:
+                bs.page.get_by_role("button", name="Log in").click()
+                bs.page.get_by_role("textbox", name="Email address").fill(self.auth.username)
+                bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
+                bs.page.get_by_role("button", name="Sign in").first.click()
+                bs.page.wait_for_url("**/one#/site-list", timeout=45000)
 
             # Poll until both fleet responses have arrived, rather than a fixed
             # wait: a slow sitesMeasurements would otherwise leave energy null
@@ -168,27 +176,34 @@ class SolarEdgeAdapter(SolarPortalAdapter):
                     break
                 bs.page.wait_for_timeout(500)
 
-            sites = (store.get(_SEARCH) or {}).get("page", [])
+            search = store.get(_SEARCH)
+            sites = search.get("page", []) if isinstance(search, dict) else []
             if not sites:
                 raise AdapterError("solaredge: site list did not load (no searchSites response)")
-            meas_by_id = {m.get("solarFieldId"): m for m in (store.get(_MEAS) or [])}
+            self._save_session(bs)
+            raw_meas = store.get(_MEAS)
+            meas_list = raw_meas if isinstance(raw_meas, list) else []
+            meas_by_id = {m.get("solarFieldId"): m for m in meas_list if isinstance(m, dict)}
             meas_loaded = bool(meas_by_id)
 
             results = []
             for site in sites:
+                if not isinstance(site, dict):
+                    continue  # defensive: unexpected entry shape in the fleet list
                 sid = site.get("solarFieldId")
-                # Per-site enrichment is best-effort: a transient failure on one
-                # site must not discard the whole account (the pipeline isolates
-                # per account, not per site).
+                # Per-site enrichment AND mapping are best-effort: one site's
+                # malformed payload must not discard the whole account (the
+                # pipeline isolates per account, not per site).
                 try:
                     env = bs.get_json(f"{_BASE}/services/dashboard/environmental-benefits/sites/{sid}")
-                except Exception:
-                    env = None
-                try:
                     live = bs.get_json(f"{_BASE}/services/dashboard/live-power/sites/{sid}")
-                except Exception:
-                    live = None
-                pd = map_solaredge_fleet(site, meas_by_id.get(sid, {}), env, live)
+                    env = env if isinstance(env, dict) else None
+                    live = live if isinstance(live, dict) else None
+                    pd = map_solaredge_fleet(site, meas_by_id.get(sid, {}), env, live)
+                except Exception as e:
+                    pd = map_solaredge_fleet(site, meas_by_id.get(sid, {}), None, None)
+                    pd.data_quality_flags.append(
+                        f"solaredge: per-site enrichment failed for this site ({e})")
                 if not meas_loaded:
                     pd.data_quality_flags.append(
                         "solaredge: sitesMeasurements did not load in time; energy figures unavailable")

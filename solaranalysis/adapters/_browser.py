@@ -40,10 +40,11 @@ class BrowserSession:
     """
 
     def __init__(self, headless: bool | None = None, timeout_ms: int = 45000,
-                 ua: str = DEFAULT_UA):
+                 ua: str = DEFAULT_UA, storage_state: dict | None = None):
         self.headless = headless_default() if headless is None else headless
         self.timeout_ms = timeout_ms
         self.ua = ua
+        self._initial_state = storage_state  # restored cookies/localStorage
         self._pw = None
         self._browser = None
         self.context = None
@@ -52,11 +53,20 @@ class BrowserSession:
     def __enter__(self) -> "BrowserSession":
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        self.context = self._browser.new_context(
-            user_agent=self.ua, viewport={"width": 1440, "height": 900}, locale="en-US")
-        self.context.set_default_timeout(self.timeout_ms)
-        self.page = self.context.new_page()
+        try:
+            self._browser = self._pw.chromium.launch(headless=self.headless)
+            kwargs = dict(user_agent=self.ua,
+                          viewport={"width": 1440, "height": 900}, locale="en-US")
+            if self._initial_state is not None:
+                kwargs["storage_state"] = self._initial_state
+            self.context = self._browser.new_context(**kwargs)
+            self.context.set_default_timeout(self.timeout_ms)
+            self.page = self.context.new_page()
+        except Exception:
+            # __exit__ never runs when __enter__ raises; clean up here so a
+            # failed launch can't leak the Playwright driver process.
+            self.__exit__()
+            raise
         return self
 
     def __exit__(self, *exc):
@@ -81,14 +91,20 @@ class BrowserSession:
                     try:
                         val = resp.json()
                     except Exception:
-                        val = None  # non-JSON / body unavailable
-                    # Ignore empty/None bodies so a late empty response can't
-                    # clobber a good earlier one for the same endpoint.
-                    if val:
-                        store[frag] = val
+                        continue  # non-JSON / body unavailable
+                    # Record even empty bodies (an empty [] still means the
+                    # endpoint answered), but never clobber good data with a
+                    # late empty response for the same endpoint.
+                    if frag in store and store[frag] and not val:
+                        continue
+                    store[frag] = val
 
         self.page.on("response", on_response)
         return store
+
+    def storage_state(self) -> dict:
+        """Cookies/localStorage of the live context (for session caching)."""
+        return self.context.storage_state()
 
     def get_json(self, url: str):
         """Authenticated GET within the browser session (shares cookies)."""

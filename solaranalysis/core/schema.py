@@ -98,6 +98,7 @@ class PlantData:
     co2_avoided_kg: Metric = field(default_factory=lambda: Metric(unit="kg"))
     trees_equivalent: Metric = field(default_factory=lambda: Metric(unit="count"))
     # pipeline metadata
+    fetched_at_utc: str | None = None  # when this run actually pulled the data
     data_quality_flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:

@@ -2,6 +2,7 @@ from __future__ import annotations
 from ..core.schema import (
     PlantData, Metric, Device, DeviceStatus, TimeRange,
 )
+from ..core import units
 from .base import SolarPortalAdapter, AdapterError
 
 # ---------------------------------------------------------------------------
@@ -38,15 +39,7 @@ _STATUS_MAP = {1: DeviceStatus.ONLINE, 0: DeviceStatus.OFFLINE}
 
 def _f(x):
     """String/empty -> float, else None."""
-    if x is None:
-        return None
-    s = str(x).strip()
-    if s == "":
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    return units.to_float(x)
 
 
 # ---------------------------------------------------------------------------
@@ -217,17 +210,29 @@ class GrowattAdapter(SolarPortalAdapter):
 
     def _fetch_web(self) -> list[PlantData]:
         from ._browser import BrowserSession
-        with BrowserSession() as bs:
+        state = self._load_session()
+        with BrowserSession(storage_state=state) as bs:
             store = bs.capture(["getPlantListTitle"])
-            bs.page.goto(f"{_HOST}/login", wait_until="domcontentloaded")
-            try:
-                bs.page.get_by_role("button", name="Agree").click(timeout=4000)
-            except Exception:
-                pass
-            bs.page.get_by_role("textbox", name="User Name").fill(self.auth.username)
-            bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-            bs.page.get_by_role("button", name="Login").click()
-            bs.page.wait_for_url("**/index**", timeout=45000)
+            logged_in = False
+            if state:
+                # A restored session lands straight on the dashboard; an
+                # expired one redirects to /login and we time out here.
+                bs.page.goto(f"{_HOST}/index", wait_until="domcontentloaded")
+                try:
+                    bs.page.wait_for_url("**/index**", timeout=10000)
+                    logged_in = True
+                except Exception:
+                    logged_in = False
+            if not logged_in:
+                bs.page.goto(f"{_HOST}/login", wait_until="domcontentloaded")
+                try:
+                    bs.page.get_by_role("button", name="Agree").click(timeout=4000)
+                except Exception:
+                    pass
+                bs.page.get_by_role("textbox", name="User Name").fill(self.auth.username)
+                bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
+                bs.page.get_by_role("button", name="Login").click()
+                bs.page.wait_for_url("**/index**", timeout=45000)
             bs.page.wait_for_timeout(4000)
 
             plants = store.get("getPlantListTitle")
@@ -235,9 +240,12 @@ class GrowattAdapter(SolarPortalAdapter):
                 plants = bs.post_json(f"{_HOST}/index/getPlantListTitle") or []
             if not plants:
                 raise AdapterError("growatt: plant list did not load")
+            self._save_session(bs)
 
             results = []
             for pl in plants:
+                if not isinstance(pl, dict):
+                    continue  # defensive: unexpected entry shape in the list
                 pid = pl.get("id")
                 # Per-plant isolation: one plant's transient request failure
                 # must not discard the whole account. Fall back to the plant's
@@ -263,6 +271,8 @@ class GrowattAdapter(SolarPortalAdapter):
             plants = []
         results = []
         for plant in plants or []:
+            if not isinstance(plant, dict):
+                continue  # defensive: unexpected entry shape in plant/list
             pid = plant.get("plant_id") or plant.get("id")
             try:
                 details = self._client.plant_details(pid)

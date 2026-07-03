@@ -1,5 +1,6 @@
 from __future__ import annotations
 from ..core.schema import PlantData, Metric, TimeRange
+from ..core import units
 from .base import SolarPortalAdapter, AdapterError
 
 # ---------------------------------------------------------------------------
@@ -24,15 +25,10 @@ _LOGIN_BUTTON = "#ctl00_ContentPlaceHolder1_Logincontrol1_SmaIdLoginButton"
 
 
 def _num(x):
-    if x is None:
-        return None
-    s = str(x).strip().replace(",", "")
-    if s == "" or s.lower() == "no data":
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    # Sunny Portal list renders '.'-decimal with ',' thousands separators for
+    # this account's locale (verified 2026-07-02); a decimal-comma locale would
+    # need different handling.
+    return units.to_float(x, strip_commas=True, none_tokens=("no data",))
 
 
 def map_sma_row(row: dict) -> PlantData:
@@ -100,10 +96,12 @@ class SMAAdapter(SolarPortalAdapter):
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         self.login()
         from ._browser import BrowserSession
-        with BrowserSession() as bs:
+        state = self._load_session()
+        with BrowserSession(storage_state=state) as bs:
             bs.page.goto(_PLANTS_URL, wait_until="domcontentloaded")
             # If not authenticated, /Plants redirects to a login page carrying
-            # the SMA ID button; click it to reach the Keycloak form.
+            # the SMA ID button; click it to reach the Keycloak form. With a
+            # restored session the button is absent and we land on the list.
             if bs.page.locator(_LOGIN_BUTTON).count():
                 bs.page.locator(_LOGIN_BUTTON).click()
                 bs.page.wait_for_url("**login.sma.energy**", timeout=30000)
@@ -111,9 +109,16 @@ class SMAAdapter(SolarPortalAdapter):
                 bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
                 bs.page.get_by_role("button", name="Log in").click()
                 bs.page.wait_for_url("**sunnyportal.com/Plants**", timeout=45000)
-                bs.page.wait_for_timeout(3000)
 
-            rows = self._parse_rows(bs.page)
+            # Poll for the data grid instead of a fixed sleep: the table can
+            # render a few seconds after the URL settles.
+            rows = []
+            for _ in range(30):  # up to ~15s
+                rows = self._parse_rows(bs.page)
+                if rows:
+                    break
+                bs.page.wait_for_timeout(500)
             if not rows:
                 raise AdapterError("sma: PV System List table did not load")
+            self._save_session(bs)
             return [map_sma_row(r) for r in rows]

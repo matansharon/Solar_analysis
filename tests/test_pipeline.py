@@ -39,6 +39,35 @@ def test_pipeline_survives_one_plant_failure(tmp_path):
     names = [p.plant_name for p in res["plants"]]
     assert "Good" in names and "Bad" not in names
 
+def test_pipeline_computes_savings_from_tariff(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"),
+                                        tariff_per_kwh=0.5)])
+    ss = SessionStore(str(tmp_path))
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None): return "ok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    savings = res["plants"][0].savings
+    # 5000 kWh lifetime * 0.5/kWh = 2500
+    assert savings.value == 2500.0
+    assert savings.is_derived is True
+
+def test_pipeline_no_savings_without_tariff(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"))])
+    ss = SessionStore(str(tmp_path))
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None): return "ok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    assert res["plants"][0].savings.value is None
+
+def test_pipeline_stamps_fetched_at(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"))])
+    ss = SessionStore(str(tmp_path))
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None): return "ok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    ts = res["plants"][0].fetched_at_utc
+    assert isinstance(ts, str) and "T" in ts  # ISO-8601 UTC stamp
+
 def test_pipeline_reports_skipped_plants(tmp_path):
     class Boom:
         def login(self): raise RuntimeError("auth failed")

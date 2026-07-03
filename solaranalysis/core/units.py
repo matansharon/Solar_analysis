@@ -23,3 +23,22 @@ def money(energy_kwh: float | None, tariff_per_kwh: float | None) -> float | Non
 
 def round_opt(x: float | None, ndigits: int = 2) -> float | None:
     return None if x is None else round(x, ndigits)
+
+def to_float(x, *, strip_commas: bool = False, none_tokens: tuple[str, ...] = ()) -> float | None:
+    """Shared lenient numeric coercion for vendor payloads.
+
+    Empty strings and any of ``none_tokens`` (case-insensitive) map to None.
+    ``strip_commas`` removes thousands separators — only enable it for sources
+    verified to use '.' as the decimal separator.
+    """
+    if x is None:
+        return None
+    s = str(x).strip()
+    if s == "" or s.lower() in none_tokens:
+        return None
+    if strip_commas:
+        s = s.replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None

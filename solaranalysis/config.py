@@ -13,7 +13,6 @@ class AuthConfig:
     mode: str = "password"
     username: str | None = None
     password: str | None = None
-    api_key: str | None = None
     token: str | None = None
 
 @dataclass
@@ -53,7 +52,6 @@ def load_config(config_path: str, env_path: str | None = None) -> AppConfig:
             mode=a.get("mode", "password"),
             username=_resolve(a.get("username")),
             password=_resolve(a.get("password")),
-            api_key=_resolve(a.get("api_key")),
             token=_resolve(a.get("token")),
         )
         plants.append(PlantConfig(
