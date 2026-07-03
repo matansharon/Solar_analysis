@@ -1,6 +1,20 @@
 import math
 from solaranalysis.core import units
 
+def test_to_float_basic():
+    assert units.to_float("3.5") == 3.5
+    assert units.to_float(42) == 42.0
+    assert units.to_float(None) is None
+    assert units.to_float("") is None
+    assert units.to_float("   ") is None
+    assert units.to_float("abc") is None
+
+def test_to_float_none_tokens_and_commas():
+    assert units.to_float("No Data", none_tokens=("no data",)) is None
+    assert units.to_float("1,234.5", strip_commas=True) == 1234.5
+    # without strip_commas a comma is not silently dropped
+    assert units.to_float("1,234") is None
+
 def test_w_to_kw():
     assert units.w_to_kw(3200) == 3.2
     assert units.w_to_kw(None) is None

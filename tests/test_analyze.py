@@ -9,11 +9,40 @@ def _plant(name, kwp, life):
                      energy_timeseries=[EnergyPoint("2025-01-01", 10.0, "day"),
                                         EnergyPoint("2025-02-01", 20.0, "day")])
 
+def _plant_no_series(name="A", kwp=100.0, life=5000.0):
+    return PlantData(plant_id=name, source_platform="growatt", source_plant_id="1",
+                     plant_name=name, peak_power_kwp=Metric(kwp, "kWp"),
+                     energy_lifetime_kwh=Metric(life, "kWh"))
+
 def test_pick_model_defaults_and_upgrade():
     cfg = AppConfig()
-    assert pick_model(cfg, TimeRange.SNAPSHOT) == "claude-sonnet-5"
-    assert pick_model(cfg, TimeRange.LAST_12MO) == "claude-opus-4-8"
-    assert pick_model(AppConfig(model="claude-haiku-4-5"), TimeRange.ALL) == "claude-haiku-4-5"
+    with_series = [_plant("A", 100.0, 5000.0)]
+    assert pick_model(cfg, TimeRange.SNAPSHOT, with_series) == "claude-sonnet-5"
+    assert pick_model(cfg, TimeRange.LAST_12MO, with_series) == "claude-opus-4-8"
+    assert pick_model(AppConfig(model="claude-haiku-4-5"), TimeRange.ALL, with_series) == "claude-haiku-4-5"
+
+def test_pick_model_no_upgrade_without_series():
+    # 12mo/all with snapshot-only data must not silently pay for Opus:
+    # there is no historical series for it to analyze.
+    cfg = AppConfig()
+    assert pick_model(cfg, TimeRange.LAST_12MO, [_plant_no_series()]) == "claude-sonnet-5"
+    assert pick_model(cfg, TimeRange.ALL, []) == "claude-sonnet-5"
+
+def test_data_block_notes_missing_series_for_ranged_reports():
+    block = build_data_block([_plant_no_series()], TimeRange.LAST_12MO, {"currency": None})
+    assert "no historical time series" in block
+    snap = build_data_block([_plant_no_series()], TimeRange.SNAPSHOT, {"currency": None})
+    assert "no historical time series" not in snap
+
+def test_summary_includes_savings_and_timestamps():
+    p = _plant_no_series()
+    p.savings = Metric(2500.0, "currency", is_derived=True)
+    p.fetched_at_utc = "2026-07-03T10:00:00+00:00"
+    p.reporting_timestamp_utc = "2026-07-03T09:55:00Z"
+    block = build_data_block([p], TimeRange.SNAPSHOT, {"currency": "ILS"})
+    assert '"savings": 2500.0' in block
+    assert "2026-07-03T10:00:00+00:00" in block
+    assert "2026-07-03T09:55:00Z" in block
 
 def test_build_data_block_contains_plants_and_csv():
     block = build_data_block([_plant("A", 100.0, 5000.0)], TimeRange.LAST_12MO,
@@ -38,13 +67,40 @@ def test_verify_numbers_ignores_percentages():
     missing = verify_numbers("efficiency up 27% this month.", "plant A energy 5000")
     assert missing == []
 
-def test_run_analysis_uses_injected_client():
-    class FakeMsg:
-        content = [type("B", (), {"type": "text", "text": "## Production & Performance\nok"})()]
-    class FakeClient:
+class _FakeMsg:
+    content = [type("B", (), {"type": "text", "text": "## Production & Performance\nok"})()]
+
+class _RecordingClient:
+    def __init__(self):
+        client = self
         class messages:
             @staticmethod
-            def create(**kw): return FakeMsg()
+            def create(**kw):
+                client.kwargs = kw
+                return _FakeMsg()
+        self.messages = messages
+
+def test_run_analysis_uses_injected_client():
     out = run_analysis([_plant("A", 100.0, 5000.0)], TimeRange.SNAPSHOT,
-                       AppConfig(), client=FakeClient())
+                       AppConfig(), client=_RecordingClient())
     assert "Production & Performance" in out
+
+def test_run_analysis_raises_when_over_max_input_tokens():
+    import pytest
+    cfg = AppConfig(max_input_tokens=10)  # absurdly small: even summaries can't fit
+    with pytest.raises(ValueError, match="max_input_tokens"):
+        run_analysis([_plant("A", 100.0, 5000.0)], TimeRange.SNAPSHOT,
+                     cfg, client=_RecordingClient())
+
+def test_run_analysis_drops_series_to_fit_token_budget():
+    # Summaries fit the budget but the day-granularity CSV series does not:
+    # the series must be omitted (with a note) rather than blowing the cap.
+    p = _plant("A", 100.0, 5000.0)
+    p.energy_timeseries = [EnergyPoint(f"2025-01-{(i % 28) + 1:02d}", 10.0, "day")
+                           for i in range(560)]
+    cfg = AppConfig(max_input_tokens=1000)
+    client = _RecordingClient()
+    run_analysis([p], TimeRange.LAST_30D, cfg, client=client)
+    user_content = client.kwargs["messages"][0]["content"]
+    assert "period,energy_kwh" not in user_content
+    assert "series omitted" in user_content

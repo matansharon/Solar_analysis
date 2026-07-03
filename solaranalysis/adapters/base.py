@@ -7,12 +7,26 @@ from ..core.schema import PlantData, TimeRange
 class AdapterError(Exception):
     pass
 
+# Persisted portal browser sessions are reused within this window; an expired
+# or invalid state just falls back to a fresh login.
+SESSION_TTL_S = 6 * 3600
+
 class SolarPortalAdapter(ABC):
     platform: str = ""
 
     def __init__(self, auth: AuthConfig, session_store: SessionStore):
         self.auth = auth
         self.sessions = session_store
+
+    def _load_session(self) -> dict | None:
+        return self.sessions.load(self.platform)
+
+    def _save_session(self, bs) -> None:
+        """Best-effort persist of the browser session; never fails the fetch."""
+        try:
+            self.sessions.save(self.platform, bs.storage_state(), SESSION_TTL_S)
+        except Exception:
+            pass
 
     @abstractmethod
     def login(self) -> None: ...

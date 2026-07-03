@@ -12,12 +12,18 @@ from ..config import AppConfig
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "system.txt"
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
-def pick_model(cfg: AppConfig, time_range: TimeRange) -> str:
+def pick_model(cfg: AppConfig, time_range: TimeRange, plants=None) -> str:
     if cfg.model:
         return cfg.model
-    if time_range in (TimeRange.LAST_12MO, TimeRange.ALL):
+    # Long ranges only justify the bigger model when there is actually
+    # historical series data to analyze (adapters may expose counters only).
+    if time_range in (TimeRange.LAST_12MO, TimeRange.ALL) and plants \
+            and any(p.energy_timeseries for p in plants):
         return "claude-opus-4-8"
     return "claude-sonnet-5"
+
+def default_meta(plants: list[PlantData]) -> dict:
+    return {"currency": plants[0].currency if plants else None}
 
 def _summary(pd: PlantData) -> dict:
     kwp = pd.peak_power_kwp.value
@@ -44,8 +50,13 @@ def _summary(pd: PlantData) -> dict:
         "devices_online": sum(1 for d in pd.devices if d.status.value == "online"),
         "alert_count": len(pd.alerts),
         "revenue": pd.revenue.value,
+        "savings": pd.savings.value,
         "currency": pd.currency,
         "co2_avoided_kg": pd.co2_avoided_kg.value,
+        # Vendors are fetched sequentially and lag differently; expose when the
+        # data was pulled/reported so same-day comparisons can be qualified.
+        "fetched_at_utc": pd.fetched_at_utc,
+        "reporting_timestamp_utc": pd.reporting_timestamp_utc,
         "data_quality_flags": pd.data_quality_flags,
     }
 
@@ -57,12 +68,20 @@ def _csv_table(rollup: dict) -> str:
         w.writerow([p.timestamp_local, p.energy_kwh])
     return buf.getvalue()
 
-def build_data_block(plants: list[PlantData], time_range: TimeRange, meta: dict) -> str:
+def build_data_block(plants: list[PlantData], time_range: TimeRange, meta: dict,
+                     include_series: bool = True) -> str:
     parts = ["=== DATA (authoritative; do not go beyond it) ==="]
     parts.append("META: " + json.dumps({**meta, "range": time_range.value}, sort_keys=True))
+    if time_range != TimeRange.SNAPSHOT and not any(p.energy_timeseries for p in plants):
+        parts.append(
+            "NOTE: no historical time series is available from any source for this "
+            "range; only current counters (today/month/year/lifetime totals) are "
+            "provided below. Do not fabricate per-period analysis.")
     for pd in plants:
         parts.append(f"\n--- PLANT {pd.plant_id} ---")
         parts.append("SUMMARY: " + json.dumps(_summary(pd), sort_keys=True))
+        if not include_series:
+            continue
         roll = plan_rollup(pd, time_range)
         if roll["series"]:
             parts.append(f"SERIES ({roll['granularity']}):")
@@ -95,10 +114,20 @@ def verify_numbers(report_md: str, data_block: str) -> list[str]:
 def _system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
+def _estimate_tokens(text: str) -> int:
+    return len(text) // 4 + 1  # ~4 chars/token heuristic
+
 def run_analysis(plants, time_range, cfg: AppConfig, client=None) -> str:
-    meta = {"currency": (plants[0].currency if plants else None)}
+    meta = default_meta(plants)
     data_block = build_data_block(plants, time_range, meta)
-    model = pick_model(cfg, time_range)
+    if _estimate_tokens(data_block) > cfg.max_input_tokens:
+        data_block = build_data_block(plants, time_range, meta, include_series=False)
+        data_block += "\nNOTE: energy series omitted to fit max_input_tokens."
+        if _estimate_tokens(data_block) > cfg.max_input_tokens:
+            raise ValueError(
+                f"data block (~{_estimate_tokens(data_block)} tokens) exceeds "
+                f"max_input_tokens={cfg.max_input_tokens}; raise it in config.yaml")
+    model = pick_model(cfg, time_range, plants)
     if client is None:
         import anthropic
         client = anthropic.Anthropic()

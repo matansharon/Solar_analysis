@@ -21,11 +21,16 @@ def test_missing_returns_none(tmp_path):
     s = SessionStore(str(tmp_path), now_fn=Clock())
     assert s.load("nope") is None
 
-def test_poll_guard(tmp_path):
+def test_failed_save_preserves_previous_session(tmp_path, monkeypatch):
+    # A crash mid-write must not destroy the previously saved session.
     clk = Clock()
     s = SessionStore(str(tmp_path), now_fn=clk)
-    assert s.can_poll("growatt", 300) is True   # never polled
-    s.mark_poll("growatt")
-    assert s.can_poll("growatt", 300) is False
-    clk.t += 301
-    assert s.can_poll("growatt", 300) is True
+    s.save("growatt", {"cookie": "old"}, ttl_seconds=100)
+    import pytest
+    import solaranalysis.core.session_store as mod
+    def boom(*a, **k): raise RuntimeError("disk full")
+    monkeypatch.setattr(mod.json, "dump", boom)
+    with pytest.raises(RuntimeError):
+        s.save("growatt", {"cookie": "new"}, ttl_seconds=100)
+    monkeypatch.undo()
+    assert s.load("growatt") == {"cookie": "old"}

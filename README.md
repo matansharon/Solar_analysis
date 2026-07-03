@@ -71,9 +71,14 @@ python -m solaranalysis.cli --range snapshot
 
 **Arguments**
 - `--config config.yaml` (default) — config file path
-- `--range {snapshot|30d|12mo|all}` (default `30d`) — time range
+- `--range {snapshot|30d|12mo|all}` (default `30d`) — time range. The portals
+  currently expose counters only (today/month/year/lifetime) with no historical
+  series, so every range produces a counters-based report; ranged runs state
+  this explicitly in the data block and on stderr.
 - `--out output/<timestamp>` (default) — output directory
-- `--cache-dir .session_cache` (default) — session cache location
+- `--cache-dir .session_cache` (default) — browser session cache. Portal logins
+  are persisted and reused for up to 6 hours, so back-to-back runs skip the
+  password login; expired sessions fall back to a fresh login automatically.
 
 The report is written to `output/<YYYYMMDD-HHMMSS>/report.html`.
 

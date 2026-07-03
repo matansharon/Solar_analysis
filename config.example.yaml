@@ -1,8 +1,8 @@
 ## Example config. Copy to config.yaml and fill credentials via .env.
 ## All three portals authenticate through a headless browser login using the
 ## site owner's username/password — no API key or token required.
-model: null            # null -> auto (sonnet-5, opus for 12mo/all)
-max_input_tokens: 60000
+model: null            # null -> auto (sonnet-5; opus for 12mo/all when series data exists)
+max_input_tokens: 60000  # enforced cap on the data block sent to Claude (~4 chars/token)
 output_language: en    # en | he
 plants:
   - name: SolarEdge Roof
