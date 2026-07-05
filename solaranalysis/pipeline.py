@@ -18,22 +18,32 @@ def _normalize(pd: PlantData, pc: PlantConfig) -> PlantData:
     return validate_plant(pd)
 
 def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
-                 adapter_factory=get_adapter, analyzer=run_analysis) -> dict:
+                 adapter_factory=get_adapter, analyzer=run_analysis,
+                 progress=None) -> dict:
+    def emit(**ev):
+        if progress:
+            progress(ev)
     plants: list[PlantData] = []
     skipped: list[dict] = []
     for pc in cfg.plants:
+        emit(event="plant_start", plant=pc.name)
         try:
             adapter = adapter_factory(pc.auth, session_store)
+            emit(event="plant_step", plant=pc.name, step="login")
             adapter.login()
+            emit(event="plant_step", plant=pc.name, step="fetch")
             fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             for pd in adapter.fetch(time_range):
                 if pc.currency and not pd.currency:
                     pd.currency = pc.currency
                 pd.fetched_at_utc = fetched_at
                 plants.append(_normalize(pd, pc))
+            emit(event="plant_done", plant=pc.name, ok=True)
         except Exception as e:  # isolate per-plant failures
             print(f"[warn] plant {pc.name!r} unavailable: {e}")
             skipped.append({"name": pc.name, "reason": str(e)})
+            emit(event="plant_done", plant=pc.name, ok=False, reason=str(e))
+    emit(event="analyze_start")
     report_md = analyzer(plants, time_range, cfg) if plants else "No plant data available."
     data_block = build_data_block(plants, time_range, default_meta(plants))
     return {"report_md": report_md, "plants": plants,

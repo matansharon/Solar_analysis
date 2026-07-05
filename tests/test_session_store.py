@@ -34,3 +34,13 @@ def test_failed_save_preserves_previous_session(tmp_path, monkeypatch):
         s.save("growatt", {"cookie": "new"}, ttl_seconds=100)
     monkeypatch.undo()
     assert s.load("growatt") == {"cookie": "old"}
+
+def test_key_with_colon_is_filesystem_safe(tmp_path):
+    from solaranalysis.core.session_store import SessionStore
+    s = SessionStore(str(tmp_path))
+    s.save("growatt:ab12cd34", {"cookie": "x"}, ttl_seconds=100)
+    assert s.load("growatt:ab12cd34") == {"cookie": "x"}
+    # Distinct keys do not collide.
+    s.save("growatt:zz99", {"cookie": "y"}, ttl_seconds=100)
+    assert s.load("growatt:ab12cd34") == {"cookie": "x"}
+    assert s.load("growatt:zz99") == {"cookie": "y"}

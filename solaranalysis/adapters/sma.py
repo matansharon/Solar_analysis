@@ -23,6 +23,8 @@ from .base import SolarPortalAdapter, AdapterError
 _PLANTS_URL = "https://www.sunnyportal.com/Plants"
 _LOGIN_BUTTON = "#ctl00_ContentPlaceHolder1_Logincontrol1_SmaIdLoginButton"
 
+from . import _browser
+
 
 def _num(x):
     # Sunny Portal list renders '.'-decimal with ',' thousands separators for
@@ -93,22 +95,33 @@ class SMAAdapter(SolarPortalAdapter):
             })
         return out
 
+    def _authenticate(self, bs, had_state: bool) -> None:
+        bs.page.goto(_PLANTS_URL, wait_until="domcontentloaded")
+        if bs.page.locator(_LOGIN_BUTTON).count():
+            bs.page.locator(_LOGIN_BUTTON).click()
+            bs.page.wait_for_url("**login.sma.energy**", timeout=30000)
+            bs.page.get_by_role("textbox", name="E-mail or user name").fill(self.auth.username)
+            bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
+            bs.page.get_by_role("button", name="Log in").click()
+            bs.page.wait_for_url("**sunnyportal.com/Plants**", timeout=45000)
+
+    def verify_login(self) -> None:
+        self.login()
+        state = self._load_session()
+        try:
+            with _browser.BrowserSession(storage_state=state) as bs:
+                self._authenticate(bs, had_state=bool(state))
+                self._save_session(bs)
+        except AdapterError:
+            raise
+        except Exception as e:
+            raise AdapterError(f"sma: login failed ({e})")
+
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         self.login()
-        from ._browser import BrowserSession
         state = self._load_session()
-        with BrowserSession(storage_state=state) as bs:
-            bs.page.goto(_PLANTS_URL, wait_until="domcontentloaded")
-            # If not authenticated, /Plants redirects to a login page carrying
-            # the SMA ID button; click it to reach the Keycloak form. With a
-            # restored session the button is absent and we land on the list.
-            if bs.page.locator(_LOGIN_BUTTON).count():
-                bs.page.locator(_LOGIN_BUTTON).click()
-                bs.page.wait_for_url("**login.sma.energy**", timeout=30000)
-                bs.page.get_by_role("textbox", name="E-mail or user name").fill(self.auth.username)
-                bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-                bs.page.get_by_role("button", name="Log in").click()
-                bs.page.wait_for_url("**sunnyportal.com/Plants**", timeout=45000)
+        with _browser.BrowserSession(storage_state=state) as bs:
+            self._authenticate(bs, had_state=bool(state))
 
             # Poll for the data grid instead of a fixed sleep: the table can
             # render a few seconds after the URL settles.

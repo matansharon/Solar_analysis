@@ -159,7 +159,7 @@ def test_solaredge_saves_and_reuses_session(tmp_path, monkeypatch):
     monkeypatch.setattr(browser_mod, "BrowserSession", fake)
     adapter, ss = _solaredge_adapter(tmp_path)
     adapter.fetch(TimeRange.SNAPSHOT)
-    assert ss.load("solaredge") == FAKE_STATE_OUT     # persisted for next run
+    assert ss.load(adapter._session_key()) == FAKE_STATE_OUT     # persisted for next run
     adapter.fetch(TimeRange.SNAPSHOT)
     assert fake.instances[-1].storage_state_in == FAKE_STATE_OUT  # restored
 
@@ -197,7 +197,7 @@ def test_growatt_web_saves_and_reuses_session(tmp_path, monkeypatch):
     monkeypatch.setattr(browser_mod, "BrowserSession", fake)
     adapter, ss = _growatt_adapter(tmp_path)
     adapter.fetch(TimeRange.SNAPSHOT)
-    assert ss.load("growatt") == FAKE_STATE_OUT
+    assert ss.load(adapter._session_key()) == FAKE_STATE_OUT
     adapter.fetch(TimeRange.SNAPSHOT)
     assert fake.instances[-1].storage_state_in == FAKE_STATE_OUT
 
@@ -308,4 +308,4 @@ def test_sma_saves_session_after_fetch(tmp_path, monkeypatch):
     ss = SessionStore(str(tmp_path))
     adapter = SMAAdapter(AuthConfig("sma", username="u", password="p"), ss)
     adapter.fetch(TimeRange.SNAPSHOT)
-    assert ss.load("sma") == FAKE_STATE_OUT
+    assert ss.load(adapter._session_key()) == FAKE_STATE_OUT

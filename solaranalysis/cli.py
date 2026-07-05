@@ -1,12 +1,11 @@
 from __future__ import annotations
 import argparse
 import sys
-from html import escape
 from datetime import datetime, timezone
 from .config import load_config
 from .core.schema import TimeRange
 from .core.session_store import SessionStore
-from .core.report import render_html, write_report
+from .core.report import render_html, write_report, append_unavailable_section
 from .pipeline import run_pipeline
 
 def main(argv=None):
@@ -35,11 +34,7 @@ def main(argv=None):
         n = len(res["skipped_plants"])
         detail = "; ".join(f"{s['name']} ({s['reason']})" for s in res["skipped_plants"])
         print(f"[warn] {n} plant(s) unavailable: {detail}", file=sys.stderr)
-        # Names/reasons can carry portal-controlled text; escape before they
-        # land in the HTML report.
-        lines = "\n".join(f"- **{escape(s['name'])}**: {escape(s['reason'])}"
-                          for s in res["skipped_plants"])
-        report_md += "\n\n## Unavailable Plants\n\nThe following plants could not be fetched for this run:\n\n" + lines
+        report_md = append_unavailable_section(report_md, res["skipped_plants"])
 
     html = render_html(report_md, title, subtitle)
     path = write_report(html, out_dir)

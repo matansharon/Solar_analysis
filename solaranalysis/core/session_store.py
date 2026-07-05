@@ -10,7 +10,8 @@ class SessionStore:
         os.makedirs(cache_dir, exist_ok=True)
 
     def _path(self, platform: str) -> str:
-        return os.path.join(self.cache_dir, f"{platform}.json")
+        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in platform)
+        return os.path.join(self.cache_dir, f"{safe}.json")
 
     def save(self, platform: str, data: dict, ttl_seconds: int) -> None:
         payload = {"expires_at": self.now_fn() + ttl_seconds, "data": data}

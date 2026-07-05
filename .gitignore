@@ -4,3 +4,6 @@ output/
 __pycache__/
 *.pyc
 .session_cache/
+/data/
+frontend/dist/
+frontend/node_modules/

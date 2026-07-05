@@ -86,3 +86,38 @@ def test_pipeline_reports_skipped_plants(tmp_path):
     assert len(res["skipped_plants"]) == 1
     assert res["skipped_plants"][0]["name"] == "Bad"
     assert isinstance(res["skipped_plants"][0]["reason"], str) and res["skipped_plants"][0]["reason"]
+
+def test_pipeline_emits_progress_events(tmp_path):
+    cfg = AppConfig(plants=[
+        PlantConfig("Bad", AuthConfig("growatt", username="bad", password="p")),
+        PlantConfig("Good", AuthConfig("growatt", username="good", password="p")),
+    ])
+    ss = SessionStore(str(tmp_path))
+
+    class Boom:
+        def login(self): raise RuntimeError("auth failed")
+        def fetch(self, tr): raise RuntimeError("nope")
+    seq = [Boom(), FakeAdapter(_pd("Good"))]
+    def factory(auth, store): return seq.pop(0)
+    def analyzer(plants, tr, c, client=None): return "ok"
+
+    events = []
+    run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory,
+                 analyzer=analyzer, progress=events.append)
+    kinds = [(e["event"], e.get("plant"), e.get("ok", e.get("step")))
+             for e in events]
+    assert ("plant_start", "Bad", None) in kinds
+    assert ("plant_done", "Bad", False) in kinds
+    assert ("plant_done", "Good", True) in kinds
+    assert ("analyze_start", None, None) in kinds
+    # The good plant reaches fetch; the failed plant fails at login (never fetch).
+    assert ("plant_step", "Good", "login") in kinds
+    assert ("plant_step", "Good", "fetch") in kinds
+    assert ("plant_step", "Bad", "login") in kinds
+    assert ("plant_step", "Bad", "fetch") not in kinds
+    # Ordering: analyze_start comes after every plant has finished.
+    names = [e["event"] for e in events]
+    assert names.index("analyze_start") > max(
+        i for i, e in enumerate(events) if e["event"] == "plant_done")
+    # Each plant's start precedes its own done.
+    assert names.index("plant_start") < names.index("plant_done")

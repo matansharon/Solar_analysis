@@ -165,10 +165,101 @@ tests/
 └── (unit tests: pure mappers, analyze, pipeline, …)
 ```
 
+## Web UI
+
+A local web app (FastAPI + React) wraps the same fetch/normalize/analyze/report
+pipeline behind a browser UI: manage plants, run/schedule comparisons, and
+review reports and run history without editing YAML. The file-based CLI above
+still works unchanged and does not require the web app.
+
+### Install
+
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+`npm run build` produces `frontend/dist/`, which the server serves as static
+files. Rebuild after pulling frontend changes.
+
+### Run
+
+```bash
+python -m solaranalysis.web
+```
+
+**Arguments** (all optional; paths are resolved to absolute at startup)
+- `--host` (default `0.0.0.0`) — bind address.
+- `--port` (default `8000`) — bind port.
+- `--data-dir` (default `./data`) — where the server keeps its database
+  (`app.db`), encryption key (`secret.key`), logs, session cache, and report
+  output. Point this at a persistent, private location in production.
+- `--app-dir` (default: the project root) — where the server looks for the
+  existing `config.yaml` (for one-time import, see below) and `.env` (for
+  `ANTHROPIC_API_KEY`).
+
+Open `http://<host>:<port>/` in a browser once the server is running.
+
+### First boot: the setup token
+
+On first start (no app password set yet), the server generates a random setup
+token and **prints it to the console/log**, e.g.:
+
+```
+SETUP TOKEN (enter in the web setup screen): 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d
+```
+
+The web UI shows a setup screen until a password is created. Copy the token
+from the server log into that screen along with your chosen app password —
+this closes the window where another client on the same network could
+otherwise claim the app first. The token is single-use: once a password
+exists, `POST /api/auth/setup` always returns 409 and the token no longer
+matters.
+
+If you're running the server as a background/Windows service rather than in
+an interactive terminal, see
+`docs/superpowers/plans/notes-web-ui-deploy.md` for where to find this token
+in the service's log file.
+
+### Credential threat model
+
+Plant portal passwords/tokens are encrypted at rest with **Fernet**
+(`cryptography`). The encryption key is auto-generated on first start at
+`<data-dir>/secret.key`. Together, `<data-dir>/secret.key` and
+`<data-dir>/app.db` are **exactly as sensitive as the old plaintext `.env`
+file** — anyone who can read both files can decrypt every stored credential.
+This is not a stronger guarantee than the CLI's `.env`; it protects against
+casual exposure (e.g. a backup or DB copy without the key) rather than
+against an attacker who already has filesystem access to the data directory.
+Back up and restrict `<data-dir>` accordingly.
+
+The app password itself is hashed (PBKDF2-HMAC-SHA256, 600k iterations, random
+per-install salt) — it is never stored or transmitted in plaintext after
+setup. The API never returns stored secret values; plant responses only ever
+include `has_password`/`has_token` booleans.
+
+**Changing the app password logs everyone out.** `PUT /api/auth/password`
+rotates the session epoch, which immediately invalidates every previously
+issued session cookie (yours included) — you'll need to log in again with the
+new password.
+
+### Importing an existing `config.yaml`
+
+If `<app-dir>/config.yaml` exists, use Settings → Import in the web UI (or
+`POST /api/import`) to one-time-copy its plants and their `.env`-resolved
+credentials into the encrypted database. This does not delete or modify
+`config.yaml`/`.env` — the CLI keeps working against them exactly as before,
+independently of anything managed through the web UI.
+
 ## Development
 
 ```bash
-python -m pytest -q
+python -m pytest -q          # backend (includes solaranalysis.web)
+cd frontend && npm run build # frontend type-check + production build
 ```
 
 The Playwright login/fetch glue is validated by live runs; unit tests cover the

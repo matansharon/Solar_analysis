@@ -2359,7 +2359,7 @@ class RunManager:
             conn.execute("UPDATE runs SET log_path=? WHERE id=?", (log_rel, rid))
             conn.commit()
             cmd = [sys.executable, "-m", "solaranalysis.web.runner", "--run",
-                   "--run-id", str(rid), "--db", self.paths.db_path,
+                   "--run-id", str(rid),
                    "--data-dir", self.paths.data_dir, "--app-dir", self.paths.app_dir]
             proc = self._spawn(cmd)
             repo.set_run_pid(conn, rid, proc.pid)
@@ -2602,7 +2602,7 @@ Add methods to `RunManager`:
             if self._active:
                 raise Busy({"kind": self._active["kind"], "id": self._active["id"]})
             cmd = [sys.executable, "-m", "solaranalysis.web.runner", "--test",
-                   "--plant-id", str(plant_id), "--db", self.paths.db_path,
+                   "--plant-id", str(plant_id),
                    "--data-dir", self.paths.data_dir, "--app-dir", self.paths.app_dir]
             proc = self._spawn(cmd)
             self._active = {"kind": "test", "id": plant_id, "proc": proc, "cancel": False}
