@@ -1,7 +1,6 @@
 from __future__ import annotations
 import argparse
 import sys
-from html import escape
 from datetime import datetime, timezone
 from .config import load_config
 from .core.schema import TimeRange
