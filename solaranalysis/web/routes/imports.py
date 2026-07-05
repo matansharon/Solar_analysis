@@ -20,5 +20,5 @@ def run_import(request: Request, conn=Depends(_conn)):
     summary = importer.import_config(conn, request.app.state.key,
                                      paths.config_yaml, paths.env_file)
     if summary["error"]:
-        return JSONResponse(summary, status_code=400)
+        return JSONResponse({**summary, "detail": summary["error"]}, status_code=400)
     return summary

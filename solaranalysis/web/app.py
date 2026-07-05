@@ -65,6 +65,7 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
 
     # First-boot: generate + log a setup token if none exists yet.
     conn = db.connect(paths.db_path)
+    db.init_db(conn)
     if repo.setup_required(conn) and repo.get_setup_token_hash(conn) is None:
         token = os.urandom(16).hex()
         repo.set_setup_token_hash(conn, hashlib.sha256(token.encode()).hexdigest())

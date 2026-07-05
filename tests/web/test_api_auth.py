@@ -89,3 +89,15 @@ def test_login_rate_limited(tmp_path):
         client.post("/api/auth/login", json={"password": "x"}, headers=CSRF)
     r = client.post("/api/auth/login", json={"password": "pw"}, headers=CSRF)
     assert r.status_code == 429
+
+
+def test_create_app_initializes_fresh_db(tmp_path):
+    # A fresh data dir with NO manual db.init_db() must still boot: create_app
+    # is responsible for creating the schema.
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    paths = Paths.create(str(tmp_path / "data"), str(app_dir))
+    client = TestClient(create_app(paths))
+    r = client.get("/api/auth/status")
+    assert r.status_code == 200
+    assert r.json() == {"setup_required": True, "authenticated": False}

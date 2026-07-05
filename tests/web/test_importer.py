@@ -122,3 +122,17 @@ def test_import_route_400_on_bad_config(tmp_path):
     r = client.post("/api/import", headers=_CSRF)
     assert r.status_code == 400
     assert "NOPE_MISSING" in r.text
+
+
+def test_import_route_400_includes_detail(tmp_path):
+    client, paths = _client_with_app(tmp_path)
+    from pathlib import Path
+    d = Path(paths.app_dir)
+    (d / ".env").write_text("", encoding="utf-8")
+    (d / "config.yaml").write_text(
+        "plants:\n  - name: X\n    auth:\n      platform: growatt\n"
+        "      mode: password\n      username: ${NOPE_MISSING}\n      password: p\n",
+        encoding="utf-8")
+    r = client.post("/api/import", headers=_CSRF)
+    assert r.status_code == 400
+    assert "NOPE_MISSING" in (r.json().get("detail") or "")
