@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./auth";
 import { Nav } from "./nav";
 import LoginOrSetup from "./routes/LoginOrSetup";
+import Dashboard from "./routes/Dashboard";
 import Plants from "./routes/Plants";
 import Runs from "./routes/Runs";
 import RunDetail from "./routes/RunDetail";
+import Schedules from "./routes/Schedules";
 import Settings from "./routes/Settings";
 
 const qc = new QueryClient();
@@ -20,11 +22,11 @@ function Shell() {
       <Nav />
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<div className="placeholder-panel">Dashboard — coming soon</div>} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/plants" element={<Plants />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
-          <Route path="/schedules" element={<div className="placeholder-panel">Schedules — coming soon</div>} />
+          <Route path="/schedules" element={<Schedules />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
