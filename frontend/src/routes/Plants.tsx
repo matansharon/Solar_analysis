@@ -311,8 +311,11 @@ function validatePlant(values: FormValues, existing: Plant | null): string | nul
   const name = values.name.trim();
   if (isCreate && !name) return "name is required";
   if (!isCreate && !name) return "name cannot be empty";
+  if (authMode === "password" && !values.username.trim()) {
+    return "Username is required for password mode.";
+  }
   if (isCreate) {
-    if (authMode === "password" && !(values.username.trim() && values.password.trim())) {
+    if (authMode === "password" && !values.password.trim()) {
       return "password mode requires username and password";
     }
     if (authMode === "token" && !values.token.trim()) {
@@ -321,8 +324,7 @@ function validatePlant(values: FormValues, existing: Plant | null): string | nul
   } else {
     const hasPassword = existing.has_password || Boolean(values.password.trim());
     const hasToken = existing.has_token || Boolean(values.token.trim());
-    const username = values.username.trim() || existing.username;
-    if (authMode === "password" && !(username && hasPassword)) {
+    if (authMode === "password" && !hasPassword) {
       return "password mode requires username and a stored/new password";
     }
     if (authMode === "token" && platform === "growatt" && !hasToken) {

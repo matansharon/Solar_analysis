@@ -138,12 +138,15 @@ def update_plant(conn, key, id, data: dict) -> None:
         password_enc = _crypto.encrypt(key, data["password"])
     if "token" in data and platform == "growatt":
         token_enc = _crypto.encrypt(key, data["token"]) if data["token"] else token_enc
+    username = row["username"]
+    if data.get("username"):
+        username = data["username"]
     conn.execute(
         "UPDATE plants SET name=?,platform=?,auth_mode=?,username=?,"
         "password_enc=?,token_enc=?,tariff_per_kwh=?,currency=?,enabled=? "
         "WHERE id=?",
         (data.get("name", row["name"]), platform, auth_mode,
-         data.get("username", row["username"]), password_enc, token_enc,
+         username, password_enc, token_enc,
          data.get("tariff_per_kwh", row["tariff_per_kwh"]),
          data.get("currency", row["currency"]),
          1 if data.get("enabled", bool(row["enabled"])) else 0, id))

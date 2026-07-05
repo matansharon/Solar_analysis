@@ -40,6 +40,19 @@ def test_update_blank_password_keeps_existing(tmp_path):
     assert auth.username == "u2" and auth.password == "orig"
 
 
+def test_update_blank_username_keeps_existing(tmp_path):
+    c, key = _ctx(tmp_path)
+    pid = repo.create_plant(c, key, {
+        "name": "G", "platform": "growatt", "auth_mode": "password",
+        "username": "orig", "password": "pw"})
+    # An explicit null username (as a buggy client might send) must NOT wipe it.
+    repo.update_plant(c, key, pid, {"username": None})
+    auth = repo.load_plant_auth(c, key, pid)
+    assert auth.username == "orig"
+    repo.update_plant(c, key, pid, {"username": "changed"})
+    assert repo.load_plant_auth(c, key, pid).username == "changed"
+
+
 def test_switch_platform_off_growatt_clears_token(tmp_path):
     c, key = _ctx(tmp_path)
     pid = repo.create_plant(c, key, {
