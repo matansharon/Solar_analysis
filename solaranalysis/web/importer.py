@@ -10,6 +10,11 @@ def import_config(conn, key, config_yaml: str, env_file: str) -> dict:
     except Exception as e:
         summary["error"] = str(e)
         return summary
+    names = [pc.name for pc in cfg.plants]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        summary["error"] = f"duplicate plant names in config: {dupes}"
+        return summary
     existing = {p["name"]: p["id"] for p in repo.list_plants(conn)}
     for pc in cfg.plants:
         data = {"name": pc.name, "platform": pc.auth.platform,
