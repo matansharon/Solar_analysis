@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sqlite3
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -25,13 +26,18 @@ class PlantBody(BaseModel):
 def validate_plant(data: dict, existing: dict | None) -> None:
     is_create = existing is None
     platform = data.get("platform") or (existing or {}).get("platform")
-    auth_mode = data.get("auth_mode") or (existing or {}).get("auth_mode") or "password"
+    if data.get("auth_mode") == "token" and platform != "growatt":
+        raise ValueError("token mode is only valid for growatt")
+    if platform != "growatt":
+        auth_mode = "password"
+    else:
+        auth_mode = data.get("auth_mode") or (existing or {}).get("auth_mode") or "password"
     if platform not in _PLATFORMS:
         raise ValueError(f"platform must be one of {sorted(_PLATFORMS)}")
     if is_create and not (data.get("name") or "").strip():
         raise ValueError("name is required")
-    if auth_mode == "token" and platform != "growatt":
-        raise ValueError("token mode is only valid for growatt")
+    if not is_create and "name" in data and not (data.get("name") or "").strip():
+        raise ValueError("name cannot be empty")
     if is_create:
         if auth_mode == "password" and not (data.get("username") and data.get("password")):
             raise ValueError("password mode requires username and password")
@@ -63,7 +69,10 @@ def create_plant(body: PlantBody, request: Request, conn=Depends(_conn)):
         validate_plant(data, None)
     except ValueError as e:
         return JSONResponse({"detail": str(e)}, status_code=422)
-    pid = repo.create_plant(conn, request.app.state.key, data)
+    try:
+        pid = repo.create_plant(conn, request.app.state.key, data)
+    except sqlite3.IntegrityError:
+        return JSONResponse({"detail": "a plant with that name already exists"}, status_code=422)
     return JSONResponse({"id": pid}, status_code=201)
 
 
@@ -85,7 +94,10 @@ def update_plant(pid: int, body: PlantBody, request: Request, conn=Depends(_conn
         validate_plant(data, existing)
     except ValueError as e:
         return JSONResponse({"detail": str(e)}, status_code=422)
-    repo.update_plant(conn, request.app.state.key, pid, data)
+    try:
+        repo.update_plant(conn, request.app.state.key, pid, data)
+    except sqlite3.IntegrityError:
+        return JSONResponse({"detail": "a plant with that name already exists"}, status_code=422)
     return {"ok": True}
 
 

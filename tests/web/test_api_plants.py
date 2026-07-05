@@ -99,3 +99,35 @@ def test_settings_get_put(tmp_path):
     client.put("/api/settings", headers=CSRF,
                json={"model": None, "max_input_tokens": 1000, "output_language": "he"})
     assert client.get("/api/settings").json()["max_input_tokens"] == 1000
+
+
+def test_update_platform_switch_off_growatt_without_authmode(tmp_path):
+    client, _ = _client(tmp_path)
+    pid = client.post("/api/plants", headers=CSRF, json={
+        "name": "G", "platform": "growatt", "auth_mode": "token",
+        "token": "t"}).json()["id"]
+    # Switch to solaredge with new creds, WITHOUT resending auth_mode -> must succeed.
+    r = client.put(f"/api/plants/{pid}", headers=CSRF, json={
+        "platform": "solaredge", "username": "u@x.com", "password": "pw"})
+    assert r.status_code == 200
+    p = client.get(f"/api/plants/{pid}").json()
+    assert p["platform"] == "solaredge" and p["auth_mode"] == "password"
+    assert p["has_token"] is False
+
+
+def test_update_rejects_blank_name(tmp_path):
+    client, _ = _client(tmp_path)
+    pid = client.post("/api/plants", headers=CSRF, json={
+        "name": "G", "platform": "sma", "auth_mode": "password",
+        "username": "u", "password": "p"}).json()["id"]
+    r = client.put(f"/api/plants/{pid}", headers=CSRF, json={"name": "  "})
+    assert r.status_code == 422
+
+
+def test_create_duplicate_name_returns_422(tmp_path):
+    client, _ = _client(tmp_path)
+    body = {"name": "Dup", "platform": "sma", "auth_mode": "password",
+            "username": "u", "password": "p"}
+    assert client.post("/api/plants", headers=CSRF, json=body).status_code == 201
+    r = client.post("/api/plants", headers=CSRF, json=body)
+    assert r.status_code == 422
