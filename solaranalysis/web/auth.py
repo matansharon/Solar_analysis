@@ -17,6 +17,8 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored: str) -> bool:
+    if not isinstance(stored, str):
+        return False
     try:
         algo, iters, salt_hex, hash_hex = stored.split("$")
         if algo != "pbkdf2_sha256":
@@ -57,7 +59,7 @@ def check_cookie(secret_key: bytes, cookie: str, current_epoch: int) -> bool:
         data = json.loads(_b64d(payload_b64))
     except (ValueError, TypeError):
         return False
-    return data.get("epoch") == current_epoch
+    return isinstance(data, dict) and data.get("epoch") == current_epoch
 
 
 class RateLimiter:

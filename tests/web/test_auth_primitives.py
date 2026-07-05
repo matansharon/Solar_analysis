@@ -45,3 +45,17 @@ def test_rate_limiter_reset_clears():
     assert rl.is_blocked("ip") is True
     rl.reset("ip")
     assert rl.is_blocked("ip") is False
+
+
+def test_cookie_non_dict_payload_rejected():
+    import base64, json, hmac as _h, hashlib
+    key = b"0" * 32
+    # A validly-signed cookie whose payload is a JSON list, not an object.
+    payload = base64.urlsafe_b64encode(json.dumps([1, 2]).encode()).decode().rstrip("=")
+    sig = base64.urlsafe_b64encode(
+        _h.new(key, payload.encode(), hashlib.sha256).digest()).decode().rstrip("=")
+    assert auth.check_cookie(key, f"{payload}.{sig}", current_epoch=1) is False
+
+
+def test_verify_password_none_stored_is_false():
+    assert auth.verify_password("anything", None) is False
