@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import markdown as md
+from html import escape as _escape
 
 _CSS = """
 :root { --bg:#0f1720; --card:#16212e; --ink:#e7eef6; --muted:#8ba3ba; --accent:#f5b301; }
@@ -42,3 +43,11 @@ def write_report(html: str, out_dir: str) -> str:
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
+
+def append_unavailable_section(report_md: str, skipped: list[dict]) -> str:
+    if not skipped:
+        return report_md
+    lines = "\n".join(f"- **{_escape(s['name'])}**: {_escape(s['reason'])}"
+                      for s in skipped)
+    return (report_md + "\n\n## Unavailable Plants\n\nThe following plants "
+            "could not be fetched for this run:\n\n" + lines)
