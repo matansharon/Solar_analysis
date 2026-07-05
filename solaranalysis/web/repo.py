@@ -173,3 +173,103 @@ def load_plant_auth(conn, key, id):
         password=_crypto.decrypt(key, r["password_enc"]) if r["password_enc"] else None,
         token=_crypto.decrypt(key, r["token_enc"]) if r["token_enc"] else None,
     )
+
+
+import json as _json
+
+
+def list_schedules(conn) -> list[dict]:
+    rows = conn.execute("SELECT * FROM schedules ORDER BY id").fetchall()
+    return [{"id": r["id"], "time_of_day": r["time_of_day"],
+             "days_of_week": r["days_of_week"], "time_range": r["time_range"],
+             "enabled": bool(r["enabled"])} for r in rows]
+
+
+def create_schedule(conn, data) -> int:
+    cur = conn.execute(
+        "INSERT INTO schedules(time_of_day,days_of_week,time_range,enabled) "
+        "VALUES(?,?,?,?)",
+        (data["time_of_day"], data["days_of_week"], data["time_range"],
+         1 if data.get("enabled", True) else 0))
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_schedule(conn, id, data) -> None:
+    row = conn.execute("SELECT * FROM schedules WHERE id=?", (id,)).fetchone()
+    if row is None:
+        raise KeyError(id)
+    conn.execute(
+        "UPDATE schedules SET time_of_day=?,days_of_week=?,time_range=?,enabled=? "
+        "WHERE id=?",
+        (data.get("time_of_day", row["time_of_day"]),
+         data.get("days_of_week", row["days_of_week"]),
+         data.get("time_range", row["time_range"]),
+         1 if data.get("enabled", bool(row["enabled"])) else 0, id))
+    conn.commit()
+
+
+def delete_schedule(conn, id) -> None:
+    conn.execute("DELETE FROM schedules WHERE id=?", (id,))
+    conn.commit()
+
+
+def run_public(row) -> dict:
+    def _dec(v):
+        return _json.loads(v) if v else None
+    return {
+        "id": row["id"], "status": row["status"], "trigger": row["trigger"],
+        "time_range": row["time_range"], "runner_pid": row["runner_pid"],
+        "started_at": row["started_at"], "finished_at": row["finished_at"],
+        "report_path": row["report_path"], "log_path": row["log_path"],
+        "plants_summary": _dec(row["plants_summary"]),
+        "skipped_plants": _dec(row["skipped_plants"]),
+        "notes": _dec(row["notes"]), "error": row["error"],
+    }
+
+
+def create_run(conn, trigger, time_range, log_path, started_at) -> int:
+    cur = conn.execute(
+        "INSERT INTO runs(status,trigger,time_range,started_at,log_path) "
+        "VALUES('running',?,?,?,?)", (trigger, time_range, started_at, log_path))
+    conn.commit()
+    return cur.lastrowid
+
+
+def set_run_pid(conn, id, pid) -> None:
+    conn.execute("UPDATE runs SET runner_pid=? WHERE id=?", (pid, id))
+    conn.commit()
+
+
+def get_run(conn, id):
+    r = conn.execute("SELECT * FROM runs WHERE id=?", (id,)).fetchone()
+    return run_public(r) if r else None
+
+
+def list_runs(conn, limit=50, offset=0) -> list[dict]:
+    rows = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT ? OFFSET ?",
+                        (limit, offset)).fetchall()
+    return [run_public(r) for r in rows]
+
+
+def running_runs(conn) -> list[dict]:
+    rows = conn.execute("SELECT * FROM runs WHERE status='running'").fetchall()
+    return [run_public(r) for r in rows]
+
+
+def finalize_run(conn, id, *, status, finished_at, report_path,
+                 plants_summary, skipped_plants, notes, error) -> None:
+    conn.execute(
+        "UPDATE runs SET status=?,finished_at=?,report_path=?,plants_summary=?,"
+        "skipped_plants=?,notes=?,error=? WHERE id=?",
+        (status, finished_at, report_path,
+         _json.dumps(plants_summary) if plants_summary is not None else None,
+         _json.dumps(skipped_plants) if skipped_plants is not None else None,
+         _json.dumps(notes) if notes is not None else None, error, id))
+    conn.commit()
+
+
+def mark_interrupted(conn, id, finished_at) -> None:
+    conn.execute("UPDATE runs SET status='interrupted',finished_at=? WHERE id=?",
+                 (finished_at, id))
+    conn.commit()
