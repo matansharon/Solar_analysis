@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from "./auth";
 import { Nav } from "./nav";
 import LoginOrSetup from "./routes/LoginOrSetup";
 import Plants from "./routes/Plants";
+import Runs from "./routes/Runs";
+import RunDetail from "./routes/RunDetail";
 import Settings from "./routes/Settings";
 
 const qc = new QueryClient();
@@ -20,8 +22,8 @@ function Shell() {
         <Routes>
           <Route path="/" element={<div className="placeholder-panel">Dashboard — coming soon</div>} />
           <Route path="/plants" element={<Plants />} />
-          <Route path="/runs" element={<div className="placeholder-panel">Runs — coming soon</div>} />
-          <Route path="/runs/:id" element={<div className="placeholder-panel">Run detail — coming soon</div>} />
+          <Route path="/runs" element={<Runs />} />
+          <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/schedules" element={<div className="placeholder-panel">Schedules — coming soon</div>} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
