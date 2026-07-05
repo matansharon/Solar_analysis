@@ -1,5 +1,4 @@
 from __future__ import annotations
-import sqlite3
 
 
 def get_setting(conn, key, default=None):
@@ -7,11 +6,15 @@ def get_setting(conn, key, default=None):
     return row["value"] if row else default
 
 
-def set_setting(conn, key, value) -> None:
+def _upsert(conn, key, value) -> None:
     conn.execute(
         "INSERT INTO settings(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, None if value is None else str(value)))
+
+
+def set_setting(conn, key, value) -> None:
+    _upsert(conn, key, value)
     conn.commit()
 
 
@@ -24,9 +27,10 @@ def get_app_settings(conn) -> dict:
 
 
 def set_app_settings(conn, model, max_input_tokens, output_language) -> None:
-    set_setting(conn, "model", model)
-    set_setting(conn, "max_input_tokens", int(max_input_tokens))
-    set_setting(conn, "output_language", output_language)
+    _upsert(conn, "model", model)
+    _upsert(conn, "max_input_tokens", int(max_input_tokens))
+    _upsert(conn, "output_language", output_language)
+    conn.commit()
 
 
 def get_session_epoch(conn) -> int:
@@ -34,9 +38,11 @@ def get_session_epoch(conn) -> int:
 
 
 def bump_session_epoch(conn) -> int:
-    nxt = get_session_epoch(conn) + 1
-    set_setting(conn, "session_epoch", nxt)
-    return nxt
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES('session_epoch','1') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(settings.value AS INTEGER) + 1")
+    conn.commit()
+    return get_session_epoch(conn)
 
 
 def get_password_hash(conn):
@@ -60,5 +66,5 @@ def set_setup_token_hash(conn, h) -> None:
 
 
 def clear_setup_token(conn) -> None:
-    conn.execute("DELETE FROM settings WHERE key='setup_token'")
+    conn.execute("DELETE FROM settings WHERE key=?", ("setup_token",))
     conn.commit()
