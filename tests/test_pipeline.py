@@ -110,3 +110,14 @@ def test_pipeline_emits_progress_events(tmp_path):
     assert ("plant_done", "Bad", False) in kinds
     assert ("plant_done", "Good", True) in kinds
     assert ("analyze_start", None, None) in kinds
+    # The good plant reaches fetch; the failed plant fails at login (never fetch).
+    assert ("plant_step", "Good", "login") in kinds
+    assert ("plant_step", "Good", "fetch") in kinds
+    assert ("plant_step", "Bad", "login") in kinds
+    assert ("plant_step", "Bad", "fetch") not in kinds
+    # Ordering: analyze_start comes after every plant has finished.
+    names = [e["event"] for e in events]
+    assert names.index("analyze_start") > max(
+        i for i, e in enumerate(events) if e["event"] == "plant_done")
+    # Each plant's start precedes its own done.
+    assert names.index("plant_start") < names.index("plant_done")
