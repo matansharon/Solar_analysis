@@ -38,6 +38,10 @@ class SolarPortalAdapter(ABC):
     def login(self) -> None: ...
 
     @abstractmethod
+    def verify_login(self) -> None:
+        """Perform a real portal login; raise AdapterError on failure."""
+
+    @abstractmethod
     def fetch(self, time_range: TimeRange) -> list[PlantData]: ...
 
 def get_adapter(auth: AuthConfig, session_store: SessionStore) -> SolarPortalAdapter:

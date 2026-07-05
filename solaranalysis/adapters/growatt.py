@@ -23,6 +23,8 @@ from .base import SolarPortalAdapter, AdapterError
 
 _HOST = "https://server.growatt.com"
 
+from . import _browser
+
 # Best-effort decode of the terse device-status code in getDevicesByPlant tuples.
 # "0" = waiting (e.g. night), "1" = normal/online, "-1" = disconnected/lost.
 _WEB_STATUS = {
@@ -202,6 +204,44 @@ class GrowattAdapter(SolarPortalAdapter):
             return
         raise AdapterError(f"growatt: unsupported mode {self.auth.mode!r}")
 
+    def _authenticate(self, bs, had_state: bool) -> None:
+        logged_in = False
+        if had_state:
+            bs.page.goto(f"{_HOST}/index", wait_until="domcontentloaded")
+            try:
+                bs.page.wait_for_url("**/index**", timeout=10000)
+                logged_in = True
+            except Exception:
+                logged_in = False
+        if not logged_in:
+            bs.page.goto(f"{_HOST}/login", wait_until="domcontentloaded")
+            try:
+                bs.page.get_by_role("button", name="Agree").click(timeout=4000)
+            except Exception:
+                pass
+            bs.page.get_by_role("textbox", name="User Name").fill(self.auth.username)
+            bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
+            bs.page.get_by_role("button", name="Login").click()
+            bs.page.wait_for_url("**/index**", timeout=45000)
+
+    def verify_login(self) -> None:
+        self.login()
+        if self.auth.mode == "token":
+            try:
+                self._client.plant_list()
+            except Exception as e:
+                raise AdapterError(f"growatt: token login failed ({e})")
+            return
+        state = self._load_session()
+        try:
+            with _browser.BrowserSession(storage_state=state) as bs:
+                self._authenticate(bs, had_state=bool(state))
+                self._save_session(bs)
+        except AdapterError:
+            raise
+        except Exception as e:
+            raise AdapterError(f"growatt: login failed ({e})")
+
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         self.login()
         if self.auth.mode == "token":
@@ -209,30 +249,10 @@ class GrowattAdapter(SolarPortalAdapter):
         return self._fetch_web()
 
     def _fetch_web(self) -> list[PlantData]:
-        from ._browser import BrowserSession
         state = self._load_session()
-        with BrowserSession(storage_state=state) as bs:
+        with _browser.BrowserSession(storage_state=state) as bs:
             store = bs.capture(["getPlantListTitle"])
-            logged_in = False
-            if state:
-                # A restored session lands straight on the dashboard; an
-                # expired one redirects to /login and we time out here.
-                bs.page.goto(f"{_HOST}/index", wait_until="domcontentloaded")
-                try:
-                    bs.page.wait_for_url("**/index**", timeout=10000)
-                    logged_in = True
-                except Exception:
-                    logged_in = False
-            if not logged_in:
-                bs.page.goto(f"{_HOST}/login", wait_until="domcontentloaded")
-                try:
-                    bs.page.get_by_role("button", name="Agree").click(timeout=4000)
-                except Exception:
-                    pass
-                bs.page.get_by_role("textbox", name="User Name").fill(self.auth.username)
-                bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-                bs.page.get_by_role("button", name="Login").click()
-                bs.page.wait_for_url("**/index**", timeout=45000)
+            self._authenticate(bs, had_state=bool(state))
             bs.page.wait_for_timeout(4000)
 
             plants = store.get("getPlantListTitle")

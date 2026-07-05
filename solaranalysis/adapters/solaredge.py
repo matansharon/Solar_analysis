@@ -28,6 +28,8 @@ _SEARCH = "sitelist/searchSites"
 _MEAS = "sitelist/sitesMeasurements"
 _BASE = "https://monitoring.solaredge.com"
 
+from . import _browser
+
 
 def _num(x):
     return units.to_float(x)
@@ -145,28 +147,40 @@ class SolarEdgeAdapter(SolarPortalAdapter):
         if not self.auth.username or not self.auth.password:
             raise AdapterError("solaredge: username/password not configured")
 
+    def _authenticate(self, bs, had_state: bool) -> None:
+        bs.page.goto(f"{_BASE}/", wait_until="domcontentloaded")
+        logged_in = False
+        if had_state:
+            try:
+                bs.page.wait_for_url("**/one#/site-list", timeout=10000)
+                logged_in = True
+            except Exception:
+                logged_in = False
+        if not logged_in:
+            bs.page.get_by_role("button", name="Log in").click()
+            bs.page.get_by_role("textbox", name="Email address").fill(self.auth.username)
+            bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
+            bs.page.get_by_role("button", name="Sign in").first.click()
+            bs.page.wait_for_url("**/one#/site-list", timeout=45000)
+
+    def verify_login(self) -> None:
+        self.login()
+        state = self._load_session()
+        try:
+            with _browser.BrowserSession(storage_state=state) as bs:
+                self._authenticate(bs, had_state=bool(state))
+                self._save_session(bs)
+        except AdapterError:
+            raise
+        except Exception as e:
+            raise AdapterError(f"solaredge: login failed ({e})")
+
     def fetch(self, time_range: TimeRange) -> list[PlantData]:
         self.login()
-        from ._browser import BrowserSession
         state = self._load_session()
-        with BrowserSession(storage_state=state) as bs:
+        with _browser.BrowserSession(storage_state=state) as bs:
             store = bs.capture([_SEARCH, _MEAS])
-            bs.page.goto(f"{_BASE}/", wait_until="domcontentloaded")
-            logged_in = False
-            if state:
-                # A restored session skips the login form entirely; on an
-                # expired session we time out here and log in normally.
-                try:
-                    bs.page.wait_for_url("**/one#/site-list", timeout=10000)
-                    logged_in = True
-                except Exception:
-                    logged_in = False
-            if not logged_in:
-                bs.page.get_by_role("button", name="Log in").click()
-                bs.page.get_by_role("textbox", name="Email address").fill(self.auth.username)
-                bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-                bs.page.get_by_role("button", name="Sign in").first.click()
-                bs.page.wait_for_url("**/one#/site-list", timeout=45000)
+            self._authenticate(bs, had_state=bool(state))
 
             # Poll until both fleet responses have arrived, rather than a fixed
             # wait: a slow sitesMeasurements would otherwise leave energy null
