@@ -86,3 +86,27 @@ def test_pipeline_reports_skipped_plants(tmp_path):
     assert len(res["skipped_plants"]) == 1
     assert res["skipped_plants"][0]["name"] == "Bad"
     assert isinstance(res["skipped_plants"][0]["reason"], str) and res["skipped_plants"][0]["reason"]
+
+def test_pipeline_emits_progress_events(tmp_path):
+    cfg = AppConfig(plants=[
+        PlantConfig("Bad", AuthConfig("growatt", username="bad", password="p")),
+        PlantConfig("Good", AuthConfig("growatt", username="good", password="p")),
+    ])
+    ss = SessionStore(str(tmp_path))
+
+    class Boom:
+        def login(self): raise RuntimeError("auth failed")
+        def fetch(self, tr): raise RuntimeError("nope")
+    seq = [Boom(), FakeAdapter(_pd("Good"))]
+    def factory(auth, store): return seq.pop(0)
+    def analyzer(plants, tr, c, client=None): return "ok"
+
+    events = []
+    run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory,
+                 analyzer=analyzer, progress=events.append)
+    kinds = [(e["event"], e.get("plant"), e.get("ok", e.get("step")))
+             for e in events]
+    assert ("plant_start", "Bad", None) in kinds
+    assert ("plant_done", "Bad", False) in kinds
+    assert ("plant_done", "Good", True) in kinds
+    assert ("analyze_start", None, None) in kinds
