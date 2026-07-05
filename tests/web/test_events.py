@@ -33,3 +33,18 @@ def test_event_roundtrip():
 def test_parse_plain_line():
     kind, val = events.parse_line("[warn] something happened")
     assert kind == "log" and val == "[warn] something happened"
+
+
+def test_redactor_partial_overlap_no_fragment_leak():
+    r = events.Redactor(["wxyz", "yzab"])
+    out = r.redact("val=wxyzab end")
+    # The union of both secrets' spans must be fully masked -- no "ab" fragment.
+    assert "wxyz" not in out and "yzab" not in out
+    assert "ab end" not in out
+    assert out == "val=*** end"
+
+
+def test_redactor_adjacent_secrets_merge():
+    r = events.Redactor(["foo", "bar"])
+    # Two distinct secrets touching -> a single merged mask.
+    assert r.redact("x foobar y") == "x *** y"
