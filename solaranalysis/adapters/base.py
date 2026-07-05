@@ -18,13 +18,19 @@ class SolarPortalAdapter(ABC):
         self.auth = auth
         self.sessions = session_store
 
+    def _session_key(self) -> str:
+        import hashlib
+        ident = self.auth.username or self.auth.token or ""
+        h = hashlib.sha1(ident.encode("utf-8")).hexdigest()[:12]
+        return f"{self.platform}:{h}"
+
     def _load_session(self) -> dict | None:
-        return self.sessions.load(self.platform)
+        return self.sessions.load(self._session_key())
 
     def _save_session(self, bs) -> None:
         """Best-effort persist of the browser session; never fails the fetch."""
         try:
-            self.sessions.save(self.platform, bs.storage_state(), SESSION_TTL_S)
+            self.sessions.save(self._session_key(), bs.storage_state(), SESSION_TTL_S)
         except Exception:
             pass
 
