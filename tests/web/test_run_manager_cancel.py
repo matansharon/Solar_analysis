@@ -77,3 +77,46 @@ def test_reconcile_marks_dead_running_as_interrupted(tmp_path, monkeypatch):
     assert n == 1
     conn = db.connect(paths.db_path)
     assert repo.get_run(conn, rid)["status"] == "interrupted"
+
+
+def test_run_test_releases_lock_when_persist_fails(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    conn = db.connect(paths.db_path)
+    key = crypto.load_or_create_key(paths.key_path)
+    pid = repo.create_plant(conn, key, {"name": "G", "platform": "sma",
+                                        "auth_mode": "password",
+                                        "username": "u", "password": "p"})
+    conn.close()
+
+    class TestProc:
+        def __init__(self):
+            self.pid = 1
+            self.stdout = iter([EVENT_PREFIX + '{"event":"test_result","ok":true,"error":null}\n'])
+        def wait(self): return 0
+        def kill(self): pass
+
+    rm = run_manager.RunManager(paths, spawn=lambda cmd: TestProc())
+    # Force the DB persistence to blow up; the lock must still be released.
+    monkeypatch.setattr(run_manager.repo, "set_plant_test_result",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db boom")))
+    rm.run_test(pid)  # persistence error is swallowed, lock must free
+    assert rm.active() is None
+
+
+def test_reconcile_continues_past_a_bad_row(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    conn = db.connect(paths.db_path)
+    r1 = repo.create_run(conn, trigger="manual", time_range="30d",
+                         log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
+    r2 = repo.create_run(conn, trigger="manual", time_range="30d",
+                         log_path="logs/run-2.log", started_at="2026-07-04T00:00:00")
+    conn.close()
+    rm = run_manager.RunManager(paths)
+    monkeypatch.setattr(run_manager, "_pid_alive", lambda pid: False)
+    # Both rows should be reconciled without the loop aborting.
+    n = rm.reconcile_on_startup()
+    assert n == 2
+    conn = db.connect(paths.db_path)
+    assert repo.get_run(conn, r1)["status"] == "interrupted"
+    assert repo.get_run(conn, r2)["status"] == "interrupted"
+    conn.close()

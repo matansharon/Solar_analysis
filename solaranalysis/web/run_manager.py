@@ -236,17 +236,28 @@ class RunManager:
             proc = self._spawn(cmd)
             self._active = {"kind": "test", "id": plant_id, "proc": proc, "cancel": False}
         result = {"ok": False, "error": "no result"}
+        # Watchdog: a hung subprocess must not hold the global lock forever.
+        watchdog = threading.Timer(timeout_s,
+                                   lambda: self._kill_tree(getattr(proc, "pid", None)))
+        watchdog.start()
         try:
             for raw in proc.stdout:
                 kind, val = events.parse_line(raw.rstrip("\n"))
-                if kind == "event" and val.get("event") == "test_result":
+                if (kind == "event" and isinstance(val, dict)
+                        and val.get("event") == "test_result"):
                     result = {"ok": bool(val.get("ok")), "error": val.get("error")}
             proc.wait()
         finally:
-            conn = db.connect(self.paths.db_path)
-            repo.set_plant_test_result(conn, plant_id, ok=result["ok"],
-                                       error=result["error"], at=_now())
-            conn.close()
+            watchdog.cancel()
+            try:
+                conn = db.connect(self.paths.db_path)
+                try:
+                    repo.set_plant_test_result(conn, plant_id, ok=result["ok"],
+                                               error=result["error"], at=_now())
+                finally:
+                    conn.close()
+            except Exception:
+                pass
             with self._lock:
                 self._active = None
         return result
@@ -254,11 +265,16 @@ class RunManager:
     def reconcile_on_startup(self) -> int:
         conn = db.connect(self.paths.db_path)
         n = 0
-        for run in repo.running_runs(conn):
-            pid = run.get("runner_pid")
-            if pid and _pid_alive(pid):
-                self._kill_tree(pid)
-            repo.mark_interrupted(conn, run["id"], finished_at=_now())
-            n += 1
-        conn.close()
+        try:
+            for run in repo.running_runs(conn):
+                try:
+                    pid = run.get("runner_pid")
+                    if pid and _pid_alive(pid):
+                        self._kill_tree(pid)
+                    repo.mark_interrupted(conn, run["id"], finished_at=_now())
+                    n += 1
+                except Exception:
+                    continue
+        finally:
+            conn.close()
         return n
