@@ -42,6 +42,9 @@ def _make_run(paths, report_rel):
     return rid
 
 
+# Note: a true mid-stream client disconnect can't be simulated under Starlette's
+# TestClient, which buffers the full response — the async rewrite (polling via
+# get_nowait + is_disconnected) is what fixes the disconnect leak in production.
 def test_stream_yields_until_end(tmp_path):
     rm = FakeRM()
     client, paths = _client(tmp_path, rm)
@@ -52,6 +55,13 @@ def test_stream_yields_until_end(tmp_path):
         body = "".join(chunk for chunk in r.iter_text())
     assert "hello" in body
     assert rm.unsub == 1
+
+
+def test_stream_404_for_missing_run(tmp_path):
+    rm = FakeRM()
+    client, paths = _client(tmp_path, rm)
+    r = client.get("/api/runs/999/stream")
+    assert r.status_code == 404
 
 
 def test_report_served_with_csp(tmp_path):
