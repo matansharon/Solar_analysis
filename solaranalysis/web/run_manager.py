@@ -200,6 +200,8 @@ class RunManager:
 
     # ---- cancel / test / reconcile --------------------------------------
     def _kill_tree(self, pid: int) -> None:
+        if not pid:
+            return
         try:
             import psutil
             parent = psutil.Process(pid)

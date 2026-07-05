@@ -126,6 +126,6 @@ def run_report(rid: int, request: Request, conn=Depends(_conn)):
     with open(full, encoding="utf-8", errors="replace") as f:
         html = f.read()
     return Response(content=html, media_type="text/html", headers={
-        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
         "X-Content-Type-Options": "nosniff",
     })

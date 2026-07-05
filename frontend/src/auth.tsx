@@ -10,8 +10,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [setupRequired, setSetup] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const refresh = async () => {
-    const s = await api.status();
-    setAuth(s.authenticated); setSetup(s.setup_required); setLoaded(true);
+    try {
+      const s = await api.status();
+      setAuth(s.authenticated); setSetup(s.setup_required);
+    } catch {
+      setAuth(false); setSetup(false);
+    } finally {
+      setLoaded(true);
+    }
   };
   useEffect(() => { void refresh(); }, []);
   if (!loaded) return <p>Loading…</p>;

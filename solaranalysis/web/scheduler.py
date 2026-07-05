@@ -20,10 +20,14 @@ class ScheduleService:
         for s in repo.list_schedules(conn):
             if not s["enabled"]:
                 continue
-            hh, mm = s["time_of_day"].split(":")
-            jobs.append({"id": s["id"], "day_of_week": s["days_of_week"],
-                         "hour": int(hh), "minute": int(mm),
-                         "time_range": s["time_range"]})
+            try:
+                hh, mm = s["time_of_day"].split(":")
+                jobs.append({"id": s["id"], "day_of_week": s["days_of_week"],
+                             "hour": int(hh), "minute": int(mm),
+                             "time_range": s["time_range"]})
+            except Exception:
+                log.warning("skipping malformed schedule row id=%s", s.get("id"))
+                continue
         conn.close()
         return jobs
 
@@ -44,10 +48,14 @@ class ScheduleService:
         for job in list(sched.get_jobs()):
             job.remove()
         for spec in self.build_jobs():
-            sched.add_job(self.fire, "cron", args=[spec["time_range"]],
-                          day_of_week=spec["day_of_week"], hour=spec["hour"],
-                          minute=spec["minute"], id=f"sched-{spec['id']}",
-                          misfire_grace_time=300, coalesce=True)
+            try:
+                sched.add_job(self.fire, "cron", args=[spec["time_range"]],
+                              day_of_week=spec["day_of_week"], hour=spec["hour"],
+                              minute=spec["minute"], id=f"sched-{spec['id']}",
+                              misfire_grace_time=300, coalesce=True)
+            except Exception:
+                log.warning("skipping schedule job id=%s: add_job failed", spec.get("id"))
+                continue
 
     def start(self) -> None:
         sched = self._ensure_sched()

@@ -50,3 +50,18 @@ def test_fire_skips_when_busy(tmp_path):
     svc = scheduler.ScheduleService(paths, rm, scheduler=object())
     svc.fire("30d")  # must not raise
     assert rm.calls == []
+
+
+def test_build_jobs_skips_malformed_row(tmp_path):
+    paths = _paths(tmp_path)
+    conn = db.connect(paths.db_path)
+    # Seed a malformed row directly (bypassing route-level validation) to
+    # simulate data that got into the DB some other way.
+    repo.create_schedule(conn, {"time_of_day": "nope", "days_of_week": "0,4",
+                                "time_range": "30d", "enabled": True})
+    conn.close()
+    svc = scheduler.ScheduleService(paths, FakeRM(), scheduler=object())
+    jobs = svc.build_jobs()  # must not raise
+    # Only the one valid, enabled row from _paths() should survive.
+    assert len(jobs) == 1
+    assert jobs[0]["hour"] == 6 and jobs[0]["minute"] == 30

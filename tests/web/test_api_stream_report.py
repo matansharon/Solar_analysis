@@ -75,9 +75,29 @@ def test_report_served_with_csp(tmp_path):
     rid = _make_run(paths, rel)
     r = client.get(f"/api/runs/{rid}/report")
     assert r.status_code == 200
-    assert "sandbox" in r.headers["content-security-policy"]
+    csp = r.headers["content-security-policy"]
+    assert "sandbox" in csp
+    assert "default-src 'none'" in csp
+    assert "style-src 'unsafe-inline'" in csp
     assert r.headers["x-content-type-options"] == "nosniff"
     assert "Report" in r.text
+
+
+def test_report_with_inline_style_is_served(tmp_path):
+    rm = FakeRM()
+    client, paths = _client(tmp_path, rm)
+    rel = "output/20260704-000001/report.html"
+    full = os.path.join(paths.data_dir, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8") as f:
+        f.write("<html><head><style>body{color:red}</style></head>"
+                 "<body>Styled</body></html>")
+    rid = _make_run(paths, rel)
+    r = client.get(f"/api/runs/{rid}/report")
+    assert r.status_code == 200
+    assert "<style>body{color:red}</style>" in r.text
+    csp = r.headers["content-security-policy"]
+    assert "style-src 'unsafe-inline'" in csp
 
 
 def test_report_path_traversal_rejected(tmp_path):

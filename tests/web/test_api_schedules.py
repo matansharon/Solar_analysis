@@ -39,3 +39,25 @@ def test_schedule_crud_and_reload(tmp_path):
     client.delete(f"/api/schedules/{sid}", headers=CSRF)
     assert client.get("/api/schedules").json() == []
     assert sched.reloads == 3  # create, update, delete each reload
+
+
+def test_create_schedule_rejects_bad_time(tmp_path):
+    sched = FakeSched()
+    client = _client(tmp_path, sched=sched)
+    r = client.post("/api/schedules", headers=CSRF, json={
+        "time_of_day": "garbage", "days_of_week": "0,1,2,3,4",
+        "time_range": "30d", "enabled": True})
+    assert r.status_code == 422
+    assert client.get("/api/schedules").json() == []
+    assert sched.reloads == 0
+
+
+def test_create_schedule_rejects_bad_days(tmp_path):
+    sched = FakeSched()
+    client = _client(tmp_path, sched=sched)
+    r = client.post("/api/schedules", headers=CSRF, json={
+        "time_of_day": "06:00", "days_of_week": "9",
+        "time_range": "30d", "enabled": True})
+    assert r.status_code == 422
+    assert client.get("/api/schedules").json() == []
+    assert sched.reloads == 0
