@@ -10,9 +10,19 @@ def load_or_create_key(path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read().strip()
     key = Fernet.generate_key()
-    # Create with restrictive perms where the OS honors them (POSIX); on
-    # Windows, tighten the ACL to the current user via icacls best-effort.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_EXCL makes creation atomic: a concurrent first-caller that already
+    # created the file loses the race here and we fall back to its key, so we
+    # never clobber (O_TRUNC) a key some ciphertext was already encrypted under.
+    # On POSIX the 0o600 mode applies at creation. On Windows the mode is
+    # ignored and the file briefly inherits the parent dir's ACL until
+    # _restrict() tightens it; this narrow window is an accepted limitation per
+    # the spec's threat model (specs/2026-07-04-web-ui-design.md §4, which
+    # treats filesystem access as already game-over and rejects pywin32/DPAPI).
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        with open(path, "rb") as f:
+            return f.read().strip()
     try:
         os.write(fd, key)
     finally:
