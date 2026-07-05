@@ -229,6 +229,8 @@ class GrowattAdapter(SolarPortalAdapter):
         if self.auth.mode == "token":
             try:
                 self._client.plant_list()
+            except AdapterError:
+                raise
             except Exception as e:
                 raise AdapterError(f"growatt: token login failed ({e})")
             return

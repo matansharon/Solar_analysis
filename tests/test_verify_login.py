@@ -3,6 +3,8 @@ from solaranalysis.config import AuthConfig
 from solaranalysis.core.session_store import SessionStore
 from solaranalysis.adapters.base import AdapterError
 from solaranalysis.adapters.solaredge import SolarEdgeAdapter
+from solaranalysis.adapters.growatt import GrowattAdapter
+from solaranalysis.adapters._growatt_v1 import GrowattV1Error
 
 
 class FakeBS:
@@ -39,5 +41,43 @@ def test_verify_login_propagates_auth_failure(monkeypatch, tmp_path):
                         lambda **k: FakeBS())
     def boom(bs, had_state): raise RuntimeError("login timeout")
     monkeypatch.setattr(ad, "_authenticate", boom)
+    with pytest.raises(AdapterError):
+        ad.verify_login()
+
+
+class FakeGrowattClient:
+    def __init__(self, plant_list_result=None, plant_list_error=None):
+        self._result = plant_list_result
+        self._error = plant_list_error
+
+    def plant_list(self):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def test_growatt_token_verify_login_success(tmp_path):
+    ss = SessionStore(str(tmp_path))
+    auth = AuthConfig("growatt", mode="token", token="t")
+    client = FakeGrowattClient(plant_list_result=[])
+    ad = GrowattAdapter(auth, ss, client=client)
+    ad.verify_login()  # must not raise
+
+
+def test_growatt_token_verify_login_preserves_adaptererror_subclass(tmp_path):
+    ss = SessionStore(str(tmp_path))
+    auth = AuthConfig("growatt", mode="token", token="t")
+    err = GrowattV1Error(10001, "token invalid")
+    client = FakeGrowattClient(plant_list_error=err)
+    ad = GrowattAdapter(auth, ss, client=client)
+    with pytest.raises(GrowattV1Error):
+        ad.verify_login()
+
+
+def test_growatt_token_verify_login_wraps_generic_error(tmp_path):
+    ss = SessionStore(str(tmp_path))
+    auth = AuthConfig("growatt", mode="token", token="t")
+    client = FakeGrowattClient(plant_list_error=RuntimeError("boom"))
+    ad = GrowattAdapter(auth, ss, client=client)
     with pytest.raises(AdapterError):
         ad.verify_login()
