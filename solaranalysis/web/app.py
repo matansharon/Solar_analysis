@@ -69,6 +69,11 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
     from .routes.auth import router as auth_router
     app.include_router(auth_router, prefix="/api/auth")
 
+    from .routes.plants import router as plants_router
+    from .routes.settings import router as settings_router
+    app.include_router(plants_router, prefix="/api/plants")
+    app.include_router(settings_router, prefix="/api/settings")
+
     @app.on_event("startup")
     def _startup():
         if app.state.run_manager:
