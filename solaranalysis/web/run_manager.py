@@ -26,6 +26,14 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False
+
+
 class RunManager:
     def __init__(self, paths: Paths, spawn=None):
         self.paths = paths
@@ -189,3 +197,68 @@ class RunManager:
         t = self._threads.get(run_id)
         if t:
             t.join(timeout)
+
+    # ---- cancel / test / reconcile --------------------------------------
+    def _kill_tree(self, pid: int) -> None:
+        try:
+            import psutil
+            parent = psutil.Process(pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            parent.kill()
+        except Exception:
+            pass
+
+    def cancel(self, run_id: int) -> bool:
+        with self._lock:
+            if not self._active or self._active["id"] != run_id \
+                    or self._active["kind"] != "run":
+                return False
+            self._active["cancel"] = True
+            proc = self._active["proc"]
+        self._kill_tree(proc.pid)
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return True
+
+    def run_test(self, plant_id: int, timeout_s: float = 95) -> dict:
+        with self._lock:
+            if self._active:
+                raise Busy({"kind": self._active["kind"], "id": self._active["id"]})
+            cmd = [sys.executable, "-m", "solaranalysis.web.runner", "--test",
+                   "--plant-id", str(plant_id),
+                   "--data-dir", self.paths.data_dir, "--app-dir", self.paths.app_dir]
+            proc = self._spawn(cmd)
+            self._active = {"kind": "test", "id": plant_id, "proc": proc, "cancel": False}
+        result = {"ok": False, "error": "no result"}
+        try:
+            for raw in proc.stdout:
+                kind, val = events.parse_line(raw.rstrip("\n"))
+                if kind == "event" and val.get("event") == "test_result":
+                    result = {"ok": bool(val.get("ok")), "error": val.get("error")}
+            proc.wait()
+        finally:
+            conn = db.connect(self.paths.db_path)
+            repo.set_plant_test_result(conn, plant_id, ok=result["ok"],
+                                       error=result["error"], at=_now())
+            conn.close()
+            with self._lock:
+                self._active = None
+        return result
+
+    def reconcile_on_startup(self) -> int:
+        conn = db.connect(self.paths.db_path)
+        n = 0
+        for run in repo.running_runs(conn):
+            pid = run.get("runner_pid")
+            if pid and _pid_alive(pid):
+                self._kill_tree(pid)
+            repo.mark_interrupted(conn, run["id"], finished_at=_now())
+            n += 1
+        conn.close()
+        return n
