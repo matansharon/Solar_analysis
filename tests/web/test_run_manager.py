@@ -76,15 +76,29 @@ def test_busy_rejects_second_start(tmp_path):
 
 def test_subscriber_receives_events_and_end(tmp_path):
     paths = _paths(tmp_path)
+    import threading as _t
+    gate = _t.Event()
     lines = [_ev({"event": "run_start", "plants": ["Good"], "time_range": "30d"}),
              "plain log line\n",
              _ev({"event": "run_complete", "status": "success",
                   "report_path": "output/x/report.html", "skipped": [],
                   "plants_summary": [], "notes": {"verify_missing_count": 0}})]
-    proc = FakeProc(lines); proc._done.set()
-    rm = run_manager.RunManager(paths, spawn=lambda cmd: proc)
+
+    class GatedProc:
+        def __init__(self):
+            self.pid = 8888
+            def gen():
+                gate.wait(timeout=5)  # do not emit until subscriber is registered
+                for l in lines:
+                    yield l
+            self.stdout = gen()
+        def wait(self): return 0
+        def kill(self): gate.set()
+
+    rm = run_manager.RunManager(paths, spawn=lambda cmd: GatedProc())
     rid = rm.start_run("manual", "30d")
     q = rm.subscribe(rid)
+    gate.set()  # now let the pump drain and broadcast
     rm.join(rid, timeout=5)
     seen = []
     while True:

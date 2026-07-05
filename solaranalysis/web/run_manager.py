@@ -90,8 +90,19 @@ class RunManager:
                    "--run-id", str(rid),
                    "--data-dir", self.paths.data_dir, "--app-dir", self.paths.app_dir]
             proc = self._spawn(cmd)
-            repo.set_run_pid(conn, rid, proc.pid)
-            conn.close()
+            try:
+                repo.set_run_pid(conn, rid, proc.pid)
+                conn.close()
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                raise
             self._active = {"kind": "run", "id": rid, "proc": proc, "cancel": False}
             self._progress[rid] = {"plants": {}, "last_event": None, "status": "running"}
             t = threading.Thread(target=self._pump, args=(rid, proc), daemon=True)
@@ -101,6 +112,8 @@ class RunManager:
 
     # ---- pump ----------------------------------------------------------
     def _apply_event(self, run_id, ev, result):
+        if not isinstance(ev, dict) or "event" not in ev:
+            return
         prog = self._progress.setdefault(run_id, {"plants": {}, "last_event": None,
                                                   "status": "running"})
         prog["last_event"] = ev
@@ -116,33 +129,47 @@ class RunManager:
 
     def _pump(self, run_id, proc):
         conn = db.connect(self.paths.db_path)
-        red = events.Redactor(self._secrets(conn))
-        log_path = os.path.join(self.paths.data_dir, f"logs/run-{run_id}.log")
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
         result = {"status": None, "report_path": None, "skipped": None,
                   "plants_summary": None, "notes": None, "error": None}
         tail = []
-        with open(log_path, "a", encoding="utf-8") as log_fp:
-            for raw in proc.stdout:
-                line = red.redact(raw.rstrip("\n"))
-                log_fp.write(line + "\n"); log_fp.flush()
-                tail.append(line)
-                del tail[:-50]
-                kind, val = events.parse_line(line)
-                self._broadcast(run_id, {"type": "log", "line": line})
-                if kind == "event":
-                    self._apply_event(run_id, val, result)
-                    self._broadcast(run_id, {"type": "progress", "event": val})
-            code = proc.wait()
-        self._finish(run_id, result, code, "\n".join(tail)[-500:], conn)
-        conn.close()
-        self._broadcast(run_id, {"type": "end"})
-        with self._lock:
-            if self._active and self._active["id"] == run_id:
-                self._active = None
+        code = -1
+        try:
+            red = events.Redactor(self._secrets(conn))
+            log_path = os.path.join(self.paths.data_dir, f"logs/run-{run_id}.log")
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as log_fp:
+                for raw in proc.stdout:
+                    line = red.redact(raw.rstrip("\n"))
+                    log_fp.write(line + "\n"); log_fp.flush()
+                    tail.append(line)
+                    del tail[:-50]
+                    kind, val = events.parse_line(line)
+                    self._broadcast(run_id, {"type": "log", "line": line})
+                    if kind == "event":
+                        self._apply_event(run_id, val, result)
+                        self._broadcast(run_id, {"type": "progress", "event": val})
+                code = proc.wait()
+        except Exception as e:
+            # A pump failure must still finalize the run as failed, not strand it.
+            if result["error"] is None:
+                result["error"] = ("\n".join(tail)[-500:] or f"pump error: {e}")
+        finally:
+            try:
+                self._finish(run_id, result, code, "\n".join(tail)[-500:], conn)
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._broadcast(run_id, {"type": "end"})
+            with self._lock:
+                if self._active and self._active["id"] == run_id:
+                    self._active = None
 
     def _finish(self, run_id, result, code, tail, conn):
-        cancelled = bool(self._active and self._active.get("cancel"))
+        with self._lock:
+            cancelled = bool(self._active and self._active.get("cancel"))
         if cancelled:
             status = "cancelled"
         elif result["status"] in ("success", "partial") and result["report_path"]:
