@@ -79,6 +79,9 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
     app.include_router(schedules_router, prefix="/api/schedules")
     app.include_router(imports_router, prefix="/api/import")
 
+    from .routes.runs import router as runs_router
+    app.include_router(runs_router, prefix="/api/runs")
+
     @app.on_event("startup")
     def _startup():
         if app.state.run_manager:
