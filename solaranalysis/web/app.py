@@ -4,7 +4,9 @@ import logging
 import os
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match
 
 from . import db, repo, crypto, auth as authmod
 from .paths import Paths
@@ -38,6 +40,20 @@ def _authenticated(request: Request) -> bool:
     return authmod.check_cookie(request.app.state.key, cookie, epoch)
 
 
+def _matches_known_route(request: Request) -> bool:
+    """True if some registered route (other than the SPA catch-all) matches
+    this request's path, regardless of HTTP method. Lets the auth middleware
+    tell "real API endpoint, unauthenticated" (401) apart from "no such
+    endpoint" (fall through to the catch-all's JSON 404)."""
+    for route in request.app.router.routes:
+        if getattr(route, "path", None) == "/{full_path:path}":
+            continue
+        match, _ = route.matches(request.scope)
+        if match != Match.NONE:
+            return True
+    return False
+
+
 def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI:
     app = FastAPI()
     app.state.paths = paths
@@ -63,7 +79,11 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
                 if request.headers.get(authmod.CSRF_HEADER) is None:
                     return JSONResponse({"detail": "CSRF header required"}, status_code=403)
             if path not in _PUBLIC and not _authenticated(request):
-                return JSONResponse({"detail": "authentication required"}, status_code=401)
+                if _matches_known_route(request):
+                    return JSONResponse({"detail": "authentication required"}, status_code=401)
+                # No real endpoint at this path: fall through so the SPA
+                # catch-all can return a plain JSON 404 instead of leaking
+                # a 401 for paths that don't exist.
         return await call_next(request)
 
     from .routes.auth import router as auth_router
@@ -88,5 +108,25 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
             app.state.run_manager.reconcile_on_startup()
         if app.state.schedule_service:
             app.state.schedule_service.start()
+
+    dist = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                        "frontend", "dist")
+    assets = os.path.join(dist, "assets")
+    if os.path.isdir(assets):
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    _PLACEHOLDER = ("<!doctype html><meta charset='utf-8'>"
+                    "<title>Solar Analysis</title>"
+                    "<p>Frontend not built. Run <code>npm run build</code> in "
+                    "<code>frontend/</code>.</p>")
+
+    @app.get("/{full_path:path}")
+    def spa(full_path: str):
+        if full_path.startswith("api/"):
+            return JSONResponse({"detail": "not found"}, status_code=404)
+        index = os.path.join(dist, "index.html")
+        if os.path.isfile(index):
+            return FileResponse(index)
+        return HTMLResponse(_PLACEHOLDER)
 
     return app
