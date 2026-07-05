@@ -66,3 +66,50 @@ def run_log(rid: int, request: Request, conn=Depends(_conn)):
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
     return {"log": text}
+
+
+import json as _json
+import queue as _queue
+from fastapi.responses import StreamingResponse, Response
+
+
+@router.get("/{rid}/stream")
+def stream_run(rid: int, request: Request):
+    rm = request.app.state.run_manager
+
+    def gen():
+        if not rm:
+            return
+        q = rm.subscribe(rid)
+        try:
+            while True:
+                try:
+                    msg = q.get(timeout=30)
+                except _queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {_json.dumps(msg)}\n\n"
+                if msg.get("type") == "end":
+                    break
+        finally:
+            rm.unsubscribe(rid, q)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.get("/{rid}/report")
+def run_report(rid: int, request: Request, conn=Depends(_conn)):
+    run = repo.get_run(conn, rid)
+    if not run or not run["report_path"]:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    paths = request.app.state.paths
+    full = os.path.realpath(os.path.join(paths.data_dir, run["report_path"]))
+    out_root = os.path.realpath(paths.output_dir)
+    if not full.startswith(out_root + os.sep) or not os.path.isfile(full):
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    with open(full, encoding="utf-8", errors="replace") as f:
+        html = f.read()
+    return Response(content=html, media_type="text/html", headers={
+        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
+    })
