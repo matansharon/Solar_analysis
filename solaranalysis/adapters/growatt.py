@@ -207,14 +207,14 @@ class GrowattAdapter(SolarPortalAdapter):
     def _authenticate(self, bs, had_state: bool) -> None:
         logged_in = False
         if had_state:
-            bs.page.goto(f"{_HOST}/index", wait_until="domcontentloaded")
+            bs.page.goto(f"{_HOST}/index", wait_until="commit")
             try:
                 bs.page.wait_for_url("**/index**", timeout=10000)
                 logged_in = True
             except Exception:
                 logged_in = False
         if not logged_in:
-            bs.page.goto(f"{_HOST}/login", wait_until="domcontentloaded")
+            bs.page.goto(f"{_HOST}/login", wait_until="commit")
             try:
                 bs.page.get_by_role("button", name="Agree").click(timeout=4000)
             except Exception:
