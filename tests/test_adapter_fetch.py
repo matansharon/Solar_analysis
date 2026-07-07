@@ -52,7 +52,7 @@ def make_fake_bs(*, captured=None, json_map=None, locator_factory=None,
         def goto(self, url, **kw):
             self._bs.actions.append(("goto", url))
 
-        def wait_for_url(self, pattern, timeout=None):
+        def wait_for_url(self, pattern, timeout=None, **kw):
             self._bs.actions.append(("wait_url", pattern))
             if wait_url_raises:
                 raise TimeoutError("wait_for_url timed out")

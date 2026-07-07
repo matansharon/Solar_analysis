@@ -44,6 +44,29 @@ def _f(x):
     return units.to_float(x)
 
 
+def _goto_retry(page, url, attempts: int = 3, per_attempt_ms: int = 20000,
+                backoff_ms: int = 3000) -> None:
+    """Navigate to ``url`` with a bounded retry.
+
+    server.growatt.com intermittently stalls the navigation request itself
+    (Chromium raises ``net::ERR_TIMED_OUT`` / connection reset), a partial-
+    outage pattern that recovers within seconds — no ``wait_until`` strategy
+    helps because the initial response never arrives. Each attempt uses a
+    short per-attempt timeout so a stalled request is abandoned quickly and a
+    healthy retry can succeed; the last failure propagates if all attempts do.
+    """
+    last = None
+    for i in range(attempts):
+        try:
+            page.goto(url, wait_until="commit", timeout=per_attempt_ms)
+            return
+        except Exception as e:
+            last = e
+            if i < attempts - 1:
+                page.wait_for_timeout(backoff_ms)
+    raise last
+
+
 # ---------------------------------------------------------------------------
 # mode=password mapper (server.growatt.com dashboard)
 # ---------------------------------------------------------------------------
@@ -207,22 +230,39 @@ class GrowattAdapter(SolarPortalAdapter):
     def _authenticate(self, bs, had_state: bool) -> None:
         logged_in = False
         if had_state:
-            bs.page.goto(f"{_HOST}/index", wait_until="commit")
+            _goto_retry(bs.page, f"{_HOST}/index")
             try:
-                bs.page.wait_for_url("**/index**", timeout=10000)
+                # wait_until="commit": the portal routinely never fires 'load'
+                # (see _goto_retry); requiring it here misreads a valid
+                # session as logged-out and forces a needless full login.
+                bs.page.wait_for_url("**/index**", wait_until="commit",
+                                     timeout=10000)
                 logged_in = True
             except Exception:
                 logged_in = False
         if not logged_in:
-            bs.page.goto(f"{_HOST}/login", wait_until="commit")
-            try:
-                bs.page.get_by_role("button", name="Agree").click(timeout=4000)
-            except Exception:
-                pass
+            _goto_retry(bs.page, f"{_HOST}/login")
             bs.page.get_by_role("textbox", name="User Name").fill(self.auth.username)
             bs.page.get_by_role("textbox", name="Password").fill(self.auth.password)
-            bs.page.get_by_role("button", name="Login").click()
-            bs.page.wait_for_url("**/index**", timeout=45000)
+            # Clicking the cookie banner's Agree before its handler is bound
+            # leaves consent pending, and the portal's Login button then
+            # submits nothing at all (observed live: no login POST fires).
+            # So retry the Agree+Login pair; the wait keys off the navigation
+            # commit because this portal routinely never fires 'load'.
+            last = None
+            for attempt in range(3):
+                try:
+                    bs.page.get_by_role("button", name="Agree").click(timeout=2000)
+                except Exception:
+                    pass  # banner already dismissed or not shown
+                bs.page.get_by_role("button", name="Login").click()
+                try:
+                    bs.page.wait_for_url("**/index**", wait_until="commit",
+                                         timeout=15000)
+                    return
+                except Exception as e:
+                    last = e
+            raise last
 
     def verify_login(self) -> None:
         self.login()
