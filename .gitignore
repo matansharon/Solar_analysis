@@ -1,4 +1,8 @@
 .env
+.venv/
+.playwright-mcp/
+*.log
+setup-screen.png
 config.yaml
 output/
 __pycache__/
