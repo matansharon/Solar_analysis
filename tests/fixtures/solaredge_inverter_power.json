@@ -1,0 +1,13 @@
+{
+  "powerUnit": "W",
+  "dcPowerEnabled": false,
+  "inverterDataArray": null,
+  "externalProductionMeterPower": null,
+  "invertersDatedPowerList": [
+    {"measurementTime": "2026-07-06T10:00:00+03:00", "inverterPowerArray": [40000.0, 41000.0, 39000.0]},
+    {"measurementTime": "2026-07-06T11:00:00+03:00", "inverterPowerArray": [50000.0, 49000.0, 51000.0]},
+    {"measurementTime": "2026-07-06T22:00:00+03:00", "inverterPowerArray": [null, null, null]},
+    {"measurementTime": "2026-07-07T10:00:00+03:00", "inverterPowerArray": [42000.0, 43000.0, 41000.0]},
+    {"measurementTime": "2026-07-08T03:00:00+03:00", "inverterPowerArray": [null, null, null]}
+  ]
+}

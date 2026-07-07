@@ -1,7 +1,11 @@
 from __future__ import annotations
 import sqlite3
 
-SCHEMA_VERSION = 1
+# Migration policy: the DDL below is additive-only (CREATE ... IF NOT EXISTS),
+# and init_db executescripts it on every startup, so older DBs pick up new
+# tables automatically. A future column add would need an explicit ALTER
+# guard keyed off the stored settings.schema_version.
+SCHEMA_VERSION = 2
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -46,6 +50,26 @@ CREATE TABLE IF NOT EXISTS runs(
   notes TEXT,
   error TEXT
 );
+CREATE TABLE IF NOT EXISTS plant_snapshots(
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER,                      -- NULL for CLI runs
+  plant_uid TEXT NOT NULL,             -- PlantData.plant_id, e.g. 'growatt-10950561'
+  source_platform TEXT NOT NULL,
+  fetched_at_utc TEXT NOT NULL,
+  time_range TEXT NOT NULL,
+  kpis_json TEXT NOT NULL              -- PlantData.to_dict() minus the timeseries lists
+);
+CREATE INDEX IF NOT EXISTS ix_snapshots_plant
+  ON plant_snapshots(plant_uid, fetched_at_utc);
+CREATE TABLE IF NOT EXISTS energy_points(
+  plant_uid TEXT NOT NULL,
+  granularity TEXT NOT NULL CHECK
+    (granularity IN ('quarter_hour','hour','day','month','year')),
+  period TEXT NOT NULL,                -- 'YYYY-MM-DD' | 'YYYY-MM' | 'YYYY'
+  energy_kwh REAL,
+  updated_at_utc TEXT NOT NULL,
+  PRIMARY KEY (plant_uid, granularity, period)
+) WITHOUT ROWID;
 """
 
 

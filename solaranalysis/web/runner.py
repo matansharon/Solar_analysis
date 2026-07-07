@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from ..config import AppConfig, PlantConfig
+from ..core import measurements
 from ..core.schema import TimeRange
 from ..core.session_store import SessionStore
 from ..core.report import render_html, write_report, append_unavailable_section
@@ -45,6 +46,9 @@ def collect_secrets(cfg: AppConfig) -> list[str]:
 def run_analysis_job(paths: Paths, run_id: int) -> int:
     load_dotenv(paths.env_file)
     conn = db.connect(paths.db_path)
+    # A scheduled subprocess may outlive an app upgrade; make sure the
+    # measurement tables exist even if the web app hasn't restarted.
+    db.init_db(conn)
     red = events.Redactor([])
     try:
         key = crypto.load_or_create_key(paths.key_path)
@@ -60,10 +64,22 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                 ev = {**ev, "reason": red.redact(str(ev["reason"]))}
             events.emit_event(ev)
 
+        def persist(plants):
+            # Persistence failure must never fail the run — note and move on.
+            try:
+                measurements.save_measurements(conn, plants, time_range, run_id)
+                conn.commit()
+                events.emit_event({"event": "measurements_saved",
+                                   "plants": len(plants)})
+            except Exception as e:
+                events.emit_event({"event": "note",
+                                   "reason": red.redact(f"measurement persistence failed: {e}")})
+
         events.emit_event({"event": "run_start",
                            "plants": [p.name for p in cfg.plants],
                            "time_range": run["time_range"]})
-        res = run_pipeline(cfg, time_range, ss, progress=progress)
+        res = run_pipeline(cfg, time_range, ss, progress=progress,
+                           on_fetched=persist)
 
         skipped = [{"name": s["name"], "reason": red.redact(str(s["reason"]))}
                    for s in res["skipped_plants"]]

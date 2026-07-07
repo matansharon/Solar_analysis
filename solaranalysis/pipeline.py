@@ -19,7 +19,7 @@ def _normalize(pd: PlantData, pc: PlantConfig) -> PlantData:
 
 def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
                  adapter_factory=get_adapter, analyzer=run_analysis,
-                 progress=None) -> dict:
+                 progress=None, on_fetched=None) -> dict:
     def emit(**ev):
         if progress:
             progress(ev)
@@ -43,6 +43,10 @@ def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
             print(f"[warn] plant {pc.name!r} unavailable: {e}")
             skipped.append({"name": pc.name, "reason": str(e)})
             emit(event="plant_done", plant=pc.name, ok=False, reason=str(e))
+    if on_fetched is not None and plants:
+        # Persist (or otherwise consume) fetched data before analysis, so it
+        # survives an analyzer failure. The callback must not raise.
+        on_fetched(plants)
     emit(event="analyze_start")
     report_md = analyzer(plants, time_range, cfg) if plants else "No plant data available."
     data_block = build_data_block(plants, time_range, default_meta(plants))

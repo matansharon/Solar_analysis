@@ -1,0 +1,38 @@
+{
+  "result": 1,
+  "obj": {
+    "currPage": 1,
+    "pages": 1,
+    "pageSize": 4,
+    "count": 1,
+    "ind": 1,
+    "datas": [
+      {
+        "deviceType": "0",
+        "ptoStatus": "0",
+        "timeServer": "2026-07-07 21:02:01",
+        "accountName": "user1",
+        "timezone": "2.0",
+        "plantId": "10950561",
+        "deviceTypeName": "max",
+        "bdcNum": "0",
+        "nominalPower": "70000.0",
+        "bdcStatus": "0",
+        "eToday": "247.1",
+        "eMonth": "2021.0",
+        "datalogTypeTest": "ShineWiFi-X",
+        "eTotal": "9807.6",
+        "pac": "5459.4",
+        "datalogSn": "DL-TEST-1",
+        "alias": "SN-TEST-1",
+        "location": "",
+        "deviceModel": "MAX 70KTL3 LV",
+        "sn": "SN-TEST-1",
+        "plantName": "Elcam Baram",
+        "status": "1",
+        "lastUpdateTime": "2026-07-07 15:02:01"
+      }
+    ],
+    "notPager": false
+  }
+}

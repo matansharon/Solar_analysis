@@ -25,6 +25,8 @@ def pick_model(cfg: AppConfig, time_range: TimeRange, plants=None) -> str:
 def default_meta(plants: list[PlantData]) -> dict:
     return {"currency": plants[0].currency if plants else None}
 
+_MAX_ALERT_DETAIL = 10
+
 def _summary(pd: PlantData) -> dict:
     kwp = pd.peak_power_kwp.value
     life = pd.energy_lifetime_kwh.value
@@ -49,6 +51,12 @@ def _summary(pd: PlantData) -> dict:
         "device_count": len(pd.devices),
         "devices_online": sum(1 for d in pd.devices if d.status.value == "online"),
         "alert_count": len(pd.alerts),
+        # Bounded alert detail (severity/code/message/time) so the report can
+        # name actual faults instead of just counting them.
+        "alerts": [{"severity": a.severity.value, "code": a.code,
+                    "message": a.message, "timestamp": a.timestamp_local}
+                   for a in pd.alerts[:_MAX_ALERT_DETAIL]],
+        "extras": pd.extras,
         "revenue": pd.revenue.value,
         "savings": pd.savings.value,
         "currency": pd.currency,

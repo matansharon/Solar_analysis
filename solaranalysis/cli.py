@@ -14,12 +14,38 @@ def main(argv=None):
     p.add_argument("--range", default="30d", choices=[t.value for t in TimeRange])
     p.add_argument("--out", default=None)
     p.add_argument("--cache-dir", default=".session_cache")
+    p.add_argument("--db", default="data/app.db",
+                   help="SQLite DB measurements accumulate in (shared with the web UI)")
+    p.add_argument("--no-persist", action="store_true",
+                   help="skip saving fetched measurements to the DB")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
     time_range = TimeRange(args.range)
     ss = SessionStore(args.cache_dir)
-    res = run_pipeline(cfg, time_range, ss)
+
+    on_fetched = None
+    if not args.no_persist:
+        def on_fetched(plants):
+            # Persistence failure must not fail the run.
+            try:
+                import os
+                from .web import db
+                from .core import measurements
+                os.makedirs(os.path.dirname(args.db) or ".", exist_ok=True)
+                conn = db.connect(args.db)
+                try:
+                    db.init_db(conn)
+                    measurements.save_measurements(conn, plants, time_range,
+                                                   run_id=None)
+                    conn.commit()
+                finally:
+                    conn.close()
+                print(f"[note] measurements saved to {args.db}", file=sys.stderr)
+            except Exception as e:
+                print(f"[warn] measurement persistence failed: {e}", file=sys.stderr)
+
+    res = run_pipeline(cfg, time_range, ss, on_fetched=on_fetched)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out_dir = args.out or f"output/{stamp}"

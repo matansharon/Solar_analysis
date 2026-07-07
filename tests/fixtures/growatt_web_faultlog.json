@@ -1,0 +1,38 @@
+{
+  "result": 1,
+  "msg": null,
+  "obj": {
+    "pages": 19,
+    "currPage": 1,
+    "datas": [
+      {
+        "deviceType": "MAX/MID/MAC",
+        "recoveryTime": null,
+        "eventId": "Warning 106",
+        "deviceModelName": "MAX 70KTL3 LV",
+        "eventType": "0",
+        "deviceSn": "SN-TEST-1",
+        "solution": "1:After shutdown, check the DC SPD and AC SPD. 2:If error message still exist, contact manufacturer.",
+        "eventSolution": "1:After shutdown, check the DC SPD and AC SPD. 2:If error message still exist, contact manufacturer.",
+        "alias": "SN-TEST-1",
+        "eventName": "SPD abnormal",
+        "sn": "SN-TEST-1",
+        "time": "2026-07-07 15:02:00"
+      },
+      {
+        "deviceType": "MAX/MID/MAC",
+        "recoveryTime": "2026-07-06 09:00:00",
+        "eventId": "Fault 201",
+        "deviceModelName": "MAX 70KTL3 LV",
+        "eventType": "1",
+        "deviceSn": "SN-TEST-1",
+        "solution": "Contact manufacturer.",
+        "eventSolution": "Contact manufacturer.",
+        "alias": "SN-TEST-1",
+        "eventName": "Grid voltage out of range",
+        "sn": "SN-TEST-1",
+        "time": "2026-07-06 08:40:00"
+      }
+    ]
+  }
+}

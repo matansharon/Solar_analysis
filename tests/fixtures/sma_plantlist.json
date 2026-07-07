@@ -1,0 +1,30 @@
+{
+  "iTotalRecords": 2,
+  "iTotalDisplayRecords": 2,
+  "sEcho": "2",
+  "sColumns": null,
+  "aaData": [
+    {
+      "DT_RowId": "cf2dbf6b-ed79-4695-a372-3fad78ff0357",
+      "PlantOid": "cf2dbf6b-ed79-4695-a372-3fad78ff0357",
+      "PlantName": "GTO Dalton דלתון",
+      "Link": "<a href='/RedirectToPlant/cf2dbf6b-ed79-4695-a372-3fad78ff0357'>GTO Dalton דלתון</a>",
+      "PeakPower": "55.00",
+      "PeakPowerValue": 55,
+      "YieldToday": "261.59",
+      "YieldTodayValue": 261.587,
+      "YieldYesterday": "322.63",
+      "YieldYesterdayValue": 322.626,
+      "YieldPreMonth": "9,818.38",
+      "YieldPreMonthValue": 9818.38,
+      "YieldMonth": "2,255.47",
+      "YieldMonthValue": 2255.472,
+      "YieldTotal": "1,434,666.28",
+      "YieldTotalValue": 1434666.283,
+      "PerformanceMonth": "41.01",
+      "PerformanceMonthValue": 41.009,
+      "PerformanceYear": "877.15",
+      "PerformanceYearValue": 877.147
+    }
+  ]
+}

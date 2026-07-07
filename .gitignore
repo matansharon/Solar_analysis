@@ -8,6 +8,7 @@ output/
 __pycache__/
 *.pyc
 .session_cache/
+.discovery/
 /data/
 frontend/dist/
 frontend/node_modules/

@@ -121,3 +121,31 @@ def test_pipeline_emits_progress_events(tmp_path):
         i for i, e in enumerate(events) if e["event"] == "plant_done")
     # Each plant's start precedes its own done.
     assert names.index("plant_start") < names.index("plant_done")
+
+def test_pipeline_calls_on_fetched_before_analyzer(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"))])
+    ss = SessionStore(str(tmp_path))
+    order = []
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None):
+        order.append("analyze")
+        return "ok"
+    def on_fetched(plants):
+        order.append(("fetched", [p.plant_name for p in plants]))
+    run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory,
+                 analyzer=analyzer, on_fetched=on_fetched)
+    # persistence sees normalized plants and runs before (so independent of) analysis
+    assert order == [("fetched", ["A"]), "analyze"]
+
+def test_pipeline_skips_on_fetched_when_nothing_fetched(tmp_path):
+    class Boom:
+        def login(self): raise RuntimeError("auth failed")
+        def fetch(self, tr): raise RuntimeError("nope")
+    cfg = AppConfig(plants=[PlantConfig("Bad", AuthConfig("growatt", username="b", password="p"))])
+    ss = SessionStore(str(tmp_path))
+    called = []
+    def factory(auth, store): return Boom()
+    def analyzer(plants, tr, c, client=None): return "ok"
+    run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory,
+                 analyzer=analyzer, on_fetched=lambda plants: called.append(plants))
+    assert called == []

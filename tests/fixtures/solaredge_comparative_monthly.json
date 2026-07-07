@@ -1,0 +1,16 @@
+{
+  "janEnergyByYears": [{"year": 2025, "value": 22406560.0}, {"year": 2026, "value": 18500458.0}],
+  "janEstimationThisYear": null,
+  "febEnergyByYears": [{"year": 2025, "value": 20403124.0}, {"year": 2026, "value": 21695848.0}],
+  "febEstimationThisYear": null,
+  "marEnergyByYears": [{"year": 2025, "value": 28000000.0}, {"year": 2026, "value": 29000000.0}],
+  "aprEnergyByYears": [{"year": 2025, "value": 30000000.0}, {"year": 2026, "value": 31000000.0}],
+  "mayEnergyByYears": [{"year": 2025, "value": 33000000.0}, {"year": 2026, "value": 34000000.0}],
+  "junEnergyByYears": [{"year": 2025, "value": 35000000.0}, {"year": 2026, "value": 36000000.0}],
+  "julEnergyByYears": [{"year": 2025, "value": 36000000.0}, {"year": 2026, "value": 8000000.0}],
+  "augEnergyByYears": [{"year": 2025, "value": 35500000.0}, {"year": 2026, "value": 0.0}],
+  "sepEnergyByYears": [{"year": 2025, "value": 31000000.0}, {"year": 2026, "value": 0.0}],
+  "octEnergyByYears": [{"year": 2025, "value": 27000000.0}, {"year": 2026, "value": 0.0}],
+  "novEnergyByYears": [{"year": 2025, "value": 22000000.0}, {"year": 2026, "value": 0.0}],
+  "decEnergyByYears": [{"year": 2025, "value": 19000000.0}, {"year": 2026, "value": 0.0}]
+}

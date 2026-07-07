@@ -1,0 +1,18 @@
+{
+  "totalAlertsCount": 3,
+  "topAlerts": [
+    {
+      "alertId": 987,
+      "severity": "HIGH",
+      "alertType": "INVERTER_BELOW_THRESHOLD_LIMIT",
+      "title": "Inverter production below threshold",
+      "openedDate": "2026-07-05T08:00:00+03:00"
+    },
+    {
+      "id": 988,
+      "impact": "low",
+      "description": "Communication gap",
+      "date": "2026-07-04T10:00:00+03:00"
+    }
+  ]
+}

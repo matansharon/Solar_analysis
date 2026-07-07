@@ -16,10 +16,11 @@ def _fake_pipeline_result(skipped):
 def _run(tmp_path, monkeypatch, skipped, extra_args=()):
     monkeypatch.setattr(cli, "load_config", lambda path: AppConfig())
     monkeypatch.setattr(cli, "run_pipeline",
-                        lambda cfg, tr, ss: _fake_pipeline_result(skipped))
+                        lambda cfg, tr, ss, **kw: _fake_pipeline_result(skipped))
     out = tmp_path / "out"
     rc = cli.main(["--config", "ignored.yaml", "--out", str(out),
-                   "--cache-dir", str(tmp_path / "cache"), *extra_args])
+                   "--cache-dir", str(tmp_path / "cache"), "--no-persist",
+                   *extra_args])
     assert rc == 0
     return (out / "report.html").read_text(encoding="utf-8")
 

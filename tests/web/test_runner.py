@@ -46,7 +46,7 @@ def test_run_job_emits_events_and_writes_report(tmp_path, monkeypatch, capsys):
 
     # Stub the pipeline so no browser/network is touched; drive progress + result.
     from solaranalysis.core.schema import PlantData
-    def fake_pipeline(cfg, tr, ss, progress=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
         progress({"event": "plant_start", "plant": "Good"})
         progress({"event": "plant_done", "plant": "Good", "ok": True})
         progress({"event": "analyze_start"})
@@ -74,7 +74,7 @@ def test_run_job_partial_when_skipped(tmp_path, monkeypatch, capsys):
     repo.create_run(conn, trigger="manual", time_range="30d",
                     log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
     conn.close()
-    def fake_pipeline(cfg, tr, ss, progress=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
         return {"report_md": "# R", "plants": [], "verify_missing": [],
                 "skipped_plants": [{"name": "Good", "reason": "boom"}]}
     monkeypatch.setattr(runner, "run_pipeline", fake_pipeline)
@@ -91,7 +91,7 @@ def test_run_job_redacts_secret_in_events(tmp_path, monkeypatch, capsys):
     repo.create_run(conn, trigger="manual", time_range="30d",
                     log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
     conn.close()
-    def fake_pipeline(cfg, tr, ss, progress=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
         progress({"event": "plant_done", "plant": "Good", "ok": False,
                   "reason": "auth failed for pw"})
         return {"report_md": "# R", "plants": [], "verify_missing": [],

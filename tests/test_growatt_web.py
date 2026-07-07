@@ -1,9 +1,18 @@
+import datetime
 import json
 import types
 from pathlib import Path
 import pytest
-from solaranalysis.adapters.growatt import map_growatt_web, _goto_retry, GrowattAdapter
-from solaranalysis.core.schema import DeviceStatus
+import solaranalysis.adapters._browser as browser_mod
+import solaranalysis.adapters.growatt as growatt_mod
+from solaranalysis.adapters.growatt import (
+    map_growatt_web, _goto_retry, GrowattAdapter,
+    map_growatt_month_chart, map_growatt_year_chart, map_growatt_total_chart,
+    map_growatt_faults, map_growatt_device_rows, map_growatt_v1_history,
+)
+from solaranalysis.config import AuthConfig
+from solaranalysis.core.schema import DeviceStatus, AlertSeverity, TimeRange
+from solaranalysis.core.session_store import SessionStore
 
 FXDIR = Path(__file__).parent / "fixtures"
 def _fx(name): return json.loads((FXDIR / name).read_text(encoding="utf-8"))
@@ -174,3 +183,185 @@ def test_login_gives_up_after_bounded_attempts():
     with pytest.raises(Exception, match="Timeout"):
         _auth_adapter()._authenticate(bs, had_state=False)
     assert page.login_clicks == 3
+
+
+# ---------------------------------------------------------------------------
+# Deep-fetch pure mappers (history charts, fault log, device list, v1 history)
+# ---------------------------------------------------------------------------
+
+class _FakeDate(datetime.date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 7, 7)
+
+
+def test_month_chart_maps_calendar_days():
+    pts = map_growatt_month_chart(_fx("growatt_web_month_chart.json")["obj"], "2026-07")
+    assert len(pts) == 31  # whole calendar month; clipping is the caller's job
+    assert pts[0].timestamp_local == "2026-07-01" and pts[0].energy_kwh == 313.2
+    assert pts[6].energy_kwh == 247.1
+    assert all(p.granularity == "day" for p in pts)
+
+
+def test_month_chart_respects_short_months():
+    obj = {"energy": [1.0] * 31}
+    assert len(map_growatt_month_chart(obj, "2026-06")) == 30
+    assert len(map_growatt_month_chart(obj, "2026-02")) == 28
+
+
+def test_year_chart_maps_months():
+    pts = map_growatt_year_chart(_fx("growatt_web_year_chart.json")["obj"], "2026")
+    assert len(pts) == 12
+    assert pts[5].timestamp_local == "2026-06" and pts[5].energy_kwh == 7786.6
+    assert all(p.granularity == "month" for p in pts)
+
+
+def test_total_chart_window_ends_at_requested_year():
+    pts = map_growatt_total_chart(_fx("growatt_web_total_chart.json")["obj"], 2026)
+    assert [p.timestamp_local for p in pts] == ["2022", "2023", "2024", "2025", "2026"]
+    assert pts[-1].energy_kwh == 9807.599853515625
+    assert all(p.granularity == "year" for p in pts)
+
+
+def test_faults_map_severity_and_resolution():
+    alerts = map_growatt_faults(_fx("growatt_web_faultlog.json")["obj"])
+    assert len(alerts) == 2
+    warn, fault = alerts
+    assert warn.severity == AlertSeverity.WARNING
+    assert warn.code == "Warning 106" and warn.message == "SPD abnormal"
+    assert warn.timestamp_local == "2026-07-07 15:02:00"
+    assert warn.resolved is False
+    assert fault.severity == AlertSeverity.ERROR
+    assert fault.resolved is True
+
+
+def test_device_rows_map_real_inventory():
+    devs = map_growatt_device_rows(
+        _fx("growatt_web_devices_list.json")["obj"]["datas"])
+    assert len(devs) == 1
+    d = devs[0]
+    assert d.device_id == "SN-TEST-1"
+    assert d.model == "MAX 70KTL3 LV"
+    assert d.status == DeviceStatus.ONLINE
+    assert d.current_power_kw == 5.459  # pac is W
+    assert d.energy_lifetime_kwh == 9807.6
+    assert d.last_seen_local == "2026-07-07 15:02:01"
+
+
+def test_v1_history_maps_and_sorts():
+    data = {"energys": [{"date": "2026-07-02", "energy": "8.1"},
+                        {"date": "2026-07-01", "energy": "12.5"}, "junk"]}
+    pts = map_growatt_v1_history(data, "day")
+    assert [p.timestamp_local for p in pts] == ["2026-07-01", "2026-07-02"]
+    assert pts[0].energy_kwh == 12.5
+
+
+def test_deep_mappers_defensive_against_empty_payloads():
+    assert map_growatt_month_chart({}, "2026-07") == []
+    assert map_growatt_month_chart(None, "bogus") == []
+    assert map_growatt_year_chart(None, "2026") == []
+    assert map_growatt_total_chart({}, 2026) == []
+    assert map_growatt_faults(None) == []
+    assert map_growatt_device_rows(None) == []
+    assert map_growatt_v1_history(None, "day") == []
+
+
+# ---------------------------------------------------------------------------
+# Deep-fetch orchestration through the fake BrowserSession
+# ---------------------------------------------------------------------------
+
+def _deep_json_map(month_calls=None):
+    def month_chart():
+        if month_calls is not None:
+            month_calls.append(1)
+        return _fx("growatt_web_month_chart.json")
+    # NB: "getDevicesByPlantList" must precede "getDevicesByPlant" — the fake
+    # matches by first substring hit, mirroring the real URL overlap.
+    return {
+        "getDevicesByPlantList": _fx("growatt_web_devices_list.json"),
+        "getPlantData": {"obj": _fx("growatt_web_details.json")},
+        "getMAXTotalData": {"obj": _fx("growatt_web_totals.json")},
+        "getDevicesByPlant": {"obj": _fx("growatt_web_devices.json")},
+        "getMAXMonthChart": month_chart,
+        "getMAXYearChart": _fx("growatt_web_year_chart.json"),
+        "getMAXTotalChart": _fx("growatt_web_total_chart.json"),
+        "getNewPlantFaultLog": _fx("growatt_web_faultlog.json"),
+    }
+
+
+def _deep_fetch(tmp_path, monkeypatch, time_range, json_map):
+    from test_adapter_fetch import make_fake_bs
+    fake = make_fake_bs(
+        captured={"getPlantListTitle": [_fx("growatt_web_plant.json")]},
+        json_map=json_map)
+    monkeypatch.setattr(browser_mod, "BrowserSession", fake)
+    monkeypatch.setattr(growatt_mod, "date", _FakeDate)
+    ss = SessionStore(str(tmp_path))
+    adapter = GrowattAdapter(AuthConfig("growatt", username="u", password="p"), ss)
+    results = adapter.fetch(time_range)
+    assert len(results) == 1
+    return results[0]
+
+
+def test_growatt_30d_populates_daily_series(tmp_path, monkeypatch):
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.LAST_30D, _deep_json_map())
+    # window 2026-06-08..2026-07-07 (install 2026-06-05 doesn't clip further)
+    assert len(pd.energy_timeseries) == 30
+    assert all(p.granularity == "day" for p in pd.energy_timeseries)
+    assert pd.energy_timeseries[0].timestamp_local == "2026-06-08"
+    assert pd.energy_timeseries[-1].timestamp_local == "2026-07-07"
+    assert pd.energy_timeseries[-1].energy_kwh == 247.1
+
+
+def test_growatt_12mo_populates_monthly_series(tmp_path, monkeypatch):
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.LAST_12MO, _deep_json_map())
+    # 2025-07..2026-07 inclusive = 13 monthly points
+    assert len(pd.energy_timeseries) == 13
+    assert all(p.granularity == "month" for p in pd.energy_timeseries)
+    assert pd.energy_timeseries[0].timestamp_local == "2025-07"
+    assert pd.energy_timeseries[-1].timestamp_local == "2026-07"
+
+
+def test_growatt_all_clips_series_to_install_date(tmp_path, monkeypatch):
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.ALL, _deep_json_map())
+    # install (creatDate) 2026-06-05 -> monthly points from 2026-06
+    assert [p.timestamp_local for p in pd.energy_timeseries] == ["2026-06", "2026-07"]
+    assert pd.energy_timeseries[0].energy_kwh == 7786.6
+
+
+def test_growatt_deep_fetch_fills_kpis_devices_alerts(tmp_path, monkeypatch):
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.SNAPSHOT, _deep_json_map())
+    assert pd.energy_month_kwh.value == 2021.0        # devices-list eMonth
+    assert pd.energy_year_kwh.value == 9807.6         # year-chart sum
+    assert pd.energy_year_kwh.is_derived is True
+    assert pd.current_power_kw.value == 5.459         # summed pac (W -> kW)
+    assert pd.extras["revenue_today"] == 593.84
+    assert pd.devices[0].model == "MAX 70KTL3 LV"     # real inventory replaced tuples
+    assert len(pd.alerts) == 2                        # real fault log
+    assert any("fault log shows the most recent page" in f
+               for f in pd.data_quality_flags)
+
+
+def test_growatt_snapshot_skips_month_charts(tmp_path, monkeypatch):
+    calls = []
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.SNAPSHOT,
+                     _deep_json_map(month_calls=calls))
+    assert calls == []
+    assert pd.energy_timeseries == []
+
+
+def test_growatt_degrades_when_deep_endpoints_break(tmp_path, monkeypatch):
+    def boom():
+        raise RuntimeError("portal hiccup")
+    jm = _deep_json_map()
+    for frag in ("getDevicesByPlantList", "getMAXMonthChart", "getMAXYearChart",
+                 "getNewPlantFaultLog"):
+        jm[frag] = boom
+    pd = _deep_fetch(tmp_path, monkeypatch, TimeRange.LAST_30D, jm)
+    # Baseline snapshot behavior survives untouched.
+    assert pd.plant_name == "Elcam Baram"
+    assert pd.energy_today_kwh.value == 314.2
+    assert pd.energy_timeseries == []
+    assert pd.energy_month_kwh.data_source_status == "not_exposed"
+    assert any("MonthChart" in f and "unavailable" in f for f in pd.data_quality_flags)
+    assert any("fault log" in f for f in pd.data_quality_flags)

@@ -1,0 +1,16 @@
+{
+  "inverters": {
+    "totalCount": 3,
+    "details": [
+      {
+        "modelName": "SE50K",
+        "serialNumbers": ["11111111-AA", "22222222-BB", "33333333-CC"]
+      }
+    ]
+  },
+  "optimizers": {"totalCount": 229, "details": [{"modelName": "P950", "totalCount": 229}]},
+  "storage": null,
+  "smartHome": null,
+  "meters": null,
+  "gateways": null
+}

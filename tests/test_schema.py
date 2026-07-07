@@ -29,6 +29,14 @@ def test_enums_have_expected_values():
     assert DeviceStatus.FAULT.value == "fault"
     assert AlertSeverity.CRITICAL.value == "critical"
 
+def test_extras_round_trip_through_to_dict():
+    pd = PlantData(plant_id="sma-1", source_platform="sma", source_plant_id="G1",
+                   plant_name="Barn")
+    pd.extras["yield_yesterday_kwh"] = 12.5
+    pd.extras["note"] = "ok"
+    d = pd.to_dict()
+    assert d["extras"] == {"yield_yesterday_kwh": 12.5, "note": "ok"}
+
 def test_device_and_alert_serialize():
     dev = Device(device_id="SN1", device_type="inverter", status=DeviceStatus.ONLINE,
                  current_power_kw=3.2)
