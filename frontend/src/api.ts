@@ -42,6 +42,32 @@ export interface Run {
   notes: Record<string, unknown> | null; error: string | null;
   progress?: { plants: Record<string, string>; status: string };
 }
+export interface DeviceSnapshot {
+  device_id: string;
+  device_type: string;
+  model: string | null;
+  manufacturer: string | null;
+  status: string;
+  current_power_kw: number | null;
+  energy_lifetime_kwh: number | null;
+  temperature_c: number | null;
+  last_seen_local: string | null;
+  fetched_at_utc: string;
+}
+export interface AlertSnapshot {
+  alert_id: string;
+  severity: string;
+  code: string | null;
+  message: string | null;
+  timestamp_local: string | null;
+  resolved: number | null;
+  fetched_at_utc: string;
+}
+export interface SeriesPoint {
+  timestamp_local: string;
+  power_kw?: number | null;
+  energy_kwh?: number | null;
+}
 
 export const api = {
   status: () => req<{ setup_required: boolean; authenticated: boolean }>("GET", "/api/auth/status"),
@@ -74,4 +100,12 @@ export const api = {
   reportUrl: (id: number) => `/api/runs/${id}/report`,
 
   runImport: () => req<Record<string, unknown>>("POST", "/api/import"),
+
+  plantDevices: (id: number) => req<DeviceSnapshot[]>("GET", `/api/plants/${id}/devices`),
+  plantAlerts: (id: number, limit = 100) =>
+    req<AlertSnapshot[]>("GET", `/api/plants/${id}/alerts?limit=${limit}`),
+  plantPower: (id: number, since?: string) =>
+    req<SeriesPoint[]>("GET", `/api/plants/${id}/power${since ? `?since=${since}` : ""}`),
+  plantEnergy: (id: number, since?: string) =>
+    req<SeriesPoint[]>("GET", `/api/plants/${id}/energy${since ? `?since=${since}` : ""}`),
 };
