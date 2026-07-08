@@ -3,9 +3,10 @@ import sqlite3
 
 # Migration policy: the DDL below is additive-only (CREATE ... IF NOT EXISTS),
 # and init_db executescripts it on every startup, so older DBs pick up new
-# tables automatically. A future column add would need an explicit ALTER
-# guard keyed off the stored settings.schema_version.
-SCHEMA_VERSION = 2
+# tables automatically. Column additions to existing tables use a guarded
+# ALTER (see init_db) since CREATE TABLE IF NOT EXISTS can't add columns to
+# an existing table.
+SCHEMA_VERSION = 3
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -70,6 +71,47 @@ CREATE TABLE IF NOT EXISTS energy_points(
   updated_at_utc TEXT NOT NULL,
   PRIMARY KEY (plant_uid, granularity, period)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS device_snapshots(
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER,                      -- NULL for CLI runs
+  config_plant_id INTEGER,             -- NULL if not fetched via the web app
+  plant_uid TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  device_type TEXT NOT NULL,
+  model TEXT,
+  manufacturer TEXT,
+  status TEXT NOT NULL,
+  current_power_kw REAL,
+  energy_lifetime_kwh REAL,
+  temperature_c REAL,
+  last_seen_local TEXT,
+  fetched_at_utc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_device_snapshots_plant
+  ON device_snapshots(config_plant_id, device_id, fetched_at_utc);
+CREATE TABLE IF NOT EXISTS alert_snapshots(
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER,
+  config_plant_id INTEGER,
+  plant_uid TEXT NOT NULL,
+  alert_id TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  code TEXT,
+  message TEXT,
+  timestamp_local TEXT,
+  resolved INTEGER,
+  fetched_at_utc TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_alert_snapshots_plant
+  ON alert_snapshots(config_plant_id, fetched_at_utc);
+CREATE TABLE IF NOT EXISTS power_points(
+  plant_uid TEXT NOT NULL,
+  config_plant_id INTEGER,
+  timestamp_local TEXT NOT NULL,
+  power_kw REAL,
+  updated_at_utc TEXT NOT NULL,
+  PRIMARY KEY (plant_uid, timestamp_local)
+) WITHOUT ROWID;
 """
 
 
@@ -81,8 +123,15 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _has_column(conn: sqlite3.Connection, table: str, col: str) -> bool:
+    return any(r["name"] == col for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_DDL)
+    for table in ("plant_snapshots", "energy_points"):
+        if not _has_column(conn, table, "config_plant_id"):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN config_plant_id INTEGER")
     conn.execute(
         "INSERT INTO settings(key,value) VALUES('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
