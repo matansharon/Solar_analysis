@@ -32,6 +32,7 @@ export function LineChart({ points, color = "var(--amber)", height = 140, unit =
       className="line-chart"
       viewBox={`0 0 ${WIDTH} ${height}`}
       preserveAspectRatio="none"
+      style={{ height }}
       role="img"
       aria-label="Trend chart"
     >
