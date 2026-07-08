@@ -91,8 +91,10 @@ def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI
     app.include_router(auth_router, prefix="/api/auth")
 
     from .routes.plants import router as plants_router
+    from .routes.plant_history import router as plant_history_router
     from .routes.settings import router as settings_router
     app.include_router(plants_router, prefix="/api/plants")
+    app.include_router(plant_history_router, prefix="/api/plants")
     app.include_router(settings_router, prefix="/api/settings")
 
     from .routes.schedules import router as schedules_router
