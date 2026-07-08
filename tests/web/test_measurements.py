@@ -5,6 +5,7 @@ import sqlite3
 from solaranalysis.core import measurements
 from solaranalysis.core.schema import (
     EnergyPoint, PlantData, Metric, TimeRange, Device, DeviceStatus, Alert, AlertSeverity,
+    PowerPoint,
 )
 from solaranalysis.web import db
 
@@ -161,3 +162,41 @@ def test_load_alerts_respects_limit():
         measurements.save_measurements(conn, [pd], TimeRange.SNAPSHOT, run_id=i)
     conn.commit()
     assert len(measurements.load_alerts(conn, 5, limit=2)) == 2
+
+
+def test_power_points_upsert_latest_wins():
+    conn = _conn()
+    p1 = _plant()
+    p1.config_plant_id = 5
+    p1.power_timeseries = [PowerPoint("2026-07-07T10:00", 3.0)]
+    measurements.save_measurements(conn, [p1], TimeRange.SNAPSHOT, run_id=None)
+    p2 = _plant()
+    p2.config_plant_id = 5
+    p2.power_timeseries = [PowerPoint("2026-07-07T10:00", 3.5)]
+    measurements.save_measurements(conn, [p2], TimeRange.SNAPSHOT, run_id=None)
+    conn.commit()
+    rows = conn.execute("SELECT power_kw FROM power_points").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["power_kw"] == 3.5
+
+
+def test_load_power_series_orders_and_filters():
+    conn = _conn()
+    pd = _plant()
+    pd.config_plant_id = 5
+    pd.power_timeseries = [PowerPoint("2026-07-07T11:00", 2.0),
+                           PowerPoint("2026-07-07T09:00", 1.0)]
+    measurements.save_measurements(conn, [pd], TimeRange.SNAPSHOT, run_id=None)
+    conn.commit()
+    out = measurements.load_power_series(conn, 5, since="2026-07-07T10:00")
+    assert [(p.timestamp_local, p.power_kw) for p in out] == [("2026-07-07T11:00", 2.0)]
+
+
+def test_load_energy_series_by_config_plant_id():
+    conn = _conn()
+    pd = _plant([EnergyPoint("2026-07-06", 100.0, "day")])
+    pd.config_plant_id = 5
+    measurements.save_measurements(conn, [pd], TimeRange.LAST_30D, run_id=None)
+    conn.commit()
+    out = measurements.load_energy_series(conn, 5, granularity="day")
+    assert [(p.timestamp_local, p.energy_kwh) for p in out] == [("2026-07-06", 100.0)]

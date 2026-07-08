@@ -14,7 +14,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from .schema import EnergyPoint, PlantData, TimeRange
+from .schema import EnergyPoint, PlantData, PowerPoint, TimeRange
 
 
 def _now_utc() -> str:
@@ -70,6 +70,18 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
                  a.code, a.message, a.timestamp_local,
                  None if a.resolved is None else int(a.resolved),
                  pd.fetched_at_utc or now))
+        for p in pd.power_timeseries:
+            if p.power_kw is None:
+                continue
+            conn.execute(
+                "INSERT INTO power_points"
+                "(plant_uid, config_plant_id, timestamp_local, power_kw, updated_at_utc) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(plant_uid, timestamp_local) DO UPDATE SET "
+                "power_kw=excluded.power_kw, "
+                "config_plant_id=excluded.config_plant_id, "
+                "updated_at_utc=excluded.updated_at_utc",
+                (pd.plant_id, pd.config_plant_id, p.timestamp_local, p.power_kw, now))
 
 
 def load_series(conn: sqlite3.Connection, plant_uid: str, granularity: str,
@@ -84,6 +96,33 @@ def load_series(conn: sqlite3.Connection, plant_uid: str, granularity: str,
     sql += " ORDER BY period"
     return [EnergyPoint(row[0], row[1], granularity)
             for row in conn.execute(sql, args)]
+
+
+def load_power_series(conn: sqlite3.Connection, config_plant_id: int,
+                      since: str | None = None) -> list[PowerPoint]:
+    """Accumulated power series for a web-managed plant, oldest first."""
+    sql = ("SELECT timestamp_local, power_kw FROM power_points "
+           "WHERE config_plant_id=?")
+    args: list = [config_plant_id]
+    if since is not None:
+        sql += " AND timestamp_local>=?"
+        args.append(since)
+    sql += " ORDER BY timestamp_local"
+    return [PowerPoint(row[0], row[1]) for row in conn.execute(sql, args)]
+
+
+def load_energy_series(conn: sqlite3.Connection, config_plant_id: int,
+                       granularity: str = "day",
+                       since: str | None = None) -> list[EnergyPoint]:
+    """Accumulated energy series for a web-managed plant, oldest first."""
+    sql = ("SELECT period, energy_kwh FROM energy_points "
+           "WHERE config_plant_id=? AND granularity=?")
+    args: list = [config_plant_id, granularity]
+    if since is not None:
+        sql += " AND period>=?"
+        args.append(since)
+    sql += " ORDER BY period"
+    return [EnergyPoint(row[0], row[1], granularity) for row in conn.execute(sql, args)]
 
 
 def load_devices_latest(conn: sqlite3.Connection, config_plant_id: int) -> list[dict]:
