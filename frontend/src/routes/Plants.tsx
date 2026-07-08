@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, Plant } from "../api";
 
@@ -204,7 +205,9 @@ function PlantRow({
 }) {
   return (
     <tr>
-      <td>{plant.name}</td>
+      <td>
+        <Link to={`/plants/${plant.id}`}>{plant.name}</Link>
+      </td>
       <td>
         <span className={`badge-platform badge-platform--${plant.platform}`}>{plant.platform}</span>
       </td>

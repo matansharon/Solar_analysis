@@ -5,6 +5,7 @@ import { Nav } from "./nav";
 import LoginOrSetup from "./routes/LoginOrSetup";
 import Dashboard from "./routes/Dashboard";
 import Plants from "./routes/Plants";
+import PlantDetail from "./routes/PlantDetail";
 import Runs from "./routes/Runs";
 import RunDetail from "./routes/RunDetail";
 import Schedules from "./routes/Schedules";
@@ -24,6 +25,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/plants" element={<Plants />} />
+          <Route path="/plants/:id" element={<PlantDetail />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/schedules" element={<Schedules />} />
