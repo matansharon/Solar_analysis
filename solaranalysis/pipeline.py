@@ -37,6 +37,7 @@ def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
                 if pc.currency and not pd.currency:
                     pd.currency = pc.currency
                 pd.fetched_at_utc = fetched_at
+                pd.config_plant_id = pc.config_id
                 plants.append(_normalize(pd, pc))
             emit(event="plant_done", plant=pc.name, ok=True)
         except Exception as e:  # isolate per-plant failures

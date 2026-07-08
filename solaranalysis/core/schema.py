@@ -103,6 +103,7 @@ class PlantData:
     extras: dict = field(default_factory=dict)
     # pipeline metadata
     fetched_at_utc: str | None = None  # when this run actually pulled the data
+    config_plant_id: int | None = None  # web app's plants.id this fetch belongs to
     data_quality_flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:

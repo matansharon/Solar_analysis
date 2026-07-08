@@ -149,3 +149,20 @@ def test_pipeline_skips_on_fetched_when_nothing_fetched(tmp_path):
     run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory,
                  analyzer=analyzer, on_fetched=lambda plants: called.append(plants))
     assert called == []
+
+def test_pipeline_stamps_config_plant_id(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"),
+                                        config_id=42)])
+    ss = SessionStore(str(tmp_path))
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None): return "ok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    assert res["plants"][0].config_plant_id == 42
+
+def test_pipeline_config_plant_id_defaults_none(tmp_path):
+    cfg = AppConfig(plants=[PlantConfig("A", AuthConfig("growatt", username="u", password="p"))])
+    ss = SessionStore(str(tmp_path))
+    def factory(auth, store): return FakeAdapter(_pd("A"))
+    def analyzer(plants, tr, c, client=None): return "ok"
+    res = run_pipeline(cfg, TimeRange.SNAPSHOT, ss, adapter_factory=factory, analyzer=analyzer)
+    assert res["plants"][0].config_plant_id is None

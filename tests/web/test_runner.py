@@ -28,6 +28,14 @@ def test_build_app_config_from_db(tmp_path):
     assert cfg.max_input_tokens == 60000
 
 
+def test_build_app_config_sets_config_id(tmp_path):
+    paths = _paths(tmp_path)
+    conn, key = _seed(paths)
+    pid = repo.list_plants(conn)[0]["id"]
+    cfg, _ = runner.build_app_config(conn, key)
+    assert cfg.plants[0].config_id == pid
+
+
 def test_collect_secrets(tmp_path):
     paths = _paths(tmp_path)
     conn, key = _seed(paths)

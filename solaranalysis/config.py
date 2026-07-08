@@ -21,6 +21,7 @@ class PlantConfig:
     auth: AuthConfig
     tariff_per_kwh: float | None = None
     currency: str | None = None
+    config_id: int | None = None  # web app's plants.id; None for CLI config.yaml plants
 
 @dataclass
 class AppConfig:

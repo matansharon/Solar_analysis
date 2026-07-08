@@ -25,7 +25,7 @@ def build_app_config(conn, key):
         auth = repo.load_plant_auth(conn, key, p["id"])
         plants.append(PlantConfig(name=p["name"], auth=auth,
                                   tariff_per_kwh=p["tariff_per_kwh"],
-                                  currency=p["currency"]))
+                                  currency=p["currency"], config_id=p["id"]))
         names[p["id"]] = p["name"]
     cfg = AppConfig(plants=plants, model=settings["model"],
                     max_input_tokens=settings["max_input_tokens"],
