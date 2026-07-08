@@ -3,7 +3,9 @@ import json
 import sqlite3
 
 from solaranalysis.core import measurements
-from solaranalysis.core.schema import EnergyPoint, PlantData, Metric, TimeRange
+from solaranalysis.core.schema import (
+    EnergyPoint, PlantData, Metric, TimeRange, Device, DeviceStatus, Alert, AlertSeverity,
+)
 from solaranalysis.web import db
 
 
@@ -82,3 +84,80 @@ def test_load_series_orders_and_filters():
     out = measurements.load_series(conn, "growatt-1", "day", since="2026-07-01")
     assert [(p.timestamp_local, p.energy_kwh) for p in out] == [
         ("2026-07-01", 1.0), ("2026-07-02", 2.0)]
+
+
+def _plant_with_device(status=DeviceStatus.ONLINE):
+    pd = PlantData(plant_id="growatt-1", source_platform="growatt",
+                   source_plant_id="1", plant_name="P")
+    pd.fetched_at_utc = "2026-07-07T10:00:00+00:00"
+    pd.config_plant_id = 5
+    pd.devices = [Device(device_id="inv-1", status=status, model="MIN 3000",
+                         current_power_kw=3.2)]
+    return pd
+
+
+def _plant_with_alert():
+    pd = PlantData(plant_id="growatt-1", source_platform="growatt",
+                   source_plant_id="1", plant_name="P")
+    pd.fetched_at_utc = "2026-07-07T10:00:00+00:00"
+    pd.config_plant_id = 5
+    pd.alerts = [Alert(alert_id="A1", severity=AlertSeverity.ERROR,
+                       message="Grid fault", timestamp_local="2026-07-07 09:00")]
+    return pd
+
+
+def test_device_snapshot_written():
+    conn = _conn()
+    measurements.save_measurements(conn, [_plant_with_device()], TimeRange.SNAPSHOT, run_id=3)
+    conn.commit()
+    row = conn.execute("SELECT * FROM device_snapshots").fetchone()
+    assert row["run_id"] == 3
+    assert row["config_plant_id"] == 5
+    assert row["device_id"] == "inv-1"
+    assert row["status"] == "online"
+    assert row["current_power_kw"] == 3.2
+
+
+def test_device_history_appends_each_run_instead_of_overwriting():
+    conn = _conn()
+    measurements.save_measurements(conn, [_plant_with_device(DeviceStatus.ONLINE)],
+                                   TimeRange.SNAPSHOT, run_id=1)
+    measurements.save_measurements(conn, [_plant_with_device(DeviceStatus.OFFLINE)],
+                                   TimeRange.SNAPSHOT, run_id=2)
+    conn.commit()
+    rows = conn.execute("SELECT status FROM device_snapshots ORDER BY id").fetchall()
+    assert [r["status"] for r in rows] == ["online", "offline"]
+
+
+def test_load_devices_latest_dedupes_to_most_recent_fetch():
+    conn = _conn()
+    older = _plant_with_device(DeviceStatus.ONLINE)
+    older.fetched_at_utc = "2026-07-06T10:00:00+00:00"
+    measurements.save_measurements(conn, [older], TimeRange.SNAPSHOT, run_id=1)
+    newer = _plant_with_device(DeviceStatus.OFFLINE)
+    newer.fetched_at_utc = "2026-07-07T10:00:00+00:00"
+    measurements.save_measurements(conn, [newer], TimeRange.SNAPSHOT, run_id=2)
+    conn.commit()
+    latest = measurements.load_devices_latest(conn, 5)
+    assert len(latest) == 1
+    assert latest[0]["status"] == "offline"
+
+
+def test_alert_snapshot_written_and_loaded_newest_first():
+    conn = _conn()
+    measurements.save_measurements(conn, [_plant_with_alert()], TimeRange.SNAPSHOT, run_id=1)
+    conn.commit()
+    alerts = measurements.load_alerts(conn, 5)
+    assert len(alerts) == 1
+    assert alerts[0]["severity"] == "error"
+    assert alerts[0]["message"] == "Grid fault"
+
+
+def test_load_alerts_respects_limit():
+    conn = _conn()
+    for i in range(3):
+        pd = _plant_with_alert()
+        pd.alerts[0].alert_id = f"A{i}"
+        measurements.save_measurements(conn, [pd], TimeRange.SNAPSHOT, run_id=i)
+    conn.commit()
+    assert len(measurements.load_alerts(conn, 5, limit=2)) == 2
