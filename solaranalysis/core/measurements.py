@@ -45,7 +45,7 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
                 "VALUES (?,?,?,?,?,?) "
                 "ON CONFLICT(plant_uid, granularity, period) DO UPDATE SET "
                 "energy_kwh=excluded.energy_kwh, "
-                "config_plant_id=excluded.config_plant_id, "
+                "config_plant_id=COALESCE(excluded.config_plant_id, energy_points.config_plant_id), "
                 "updated_at_utc=excluded.updated_at_utc",
                 (pd.plant_id, pd.config_plant_id, p.granularity, p.timestamp_local,
                  p.energy_kwh, now))
@@ -70,6 +70,8 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
                  a.code, a.message, a.timestamp_local,
                  None if a.resolved is None else int(a.resolved),
                  pd.fetched_at_utc or now))
+        # No adapter (growatt/sma/solaredge) currently populates power_timeseries,
+        # so this loop is a no-op on real runs today; infrastructure for future adapter work.
         for p in pd.power_timeseries:
             if p.power_kw is None:
                 continue
@@ -79,7 +81,7 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
                 "VALUES (?,?,?,?,?) "
                 "ON CONFLICT(plant_uid, timestamp_local) DO UPDATE SET "
                 "power_kw=excluded.power_kw, "
-                "config_plant_id=excluded.config_plant_id, "
+                "config_plant_id=COALESCE(excluded.config_plant_id, power_points.config_plant_id), "
                 "updated_at_utc=excluded.updated_at_utc",
                 (pd.plant_id, pd.config_plant_id, p.timestamp_local, p.power_kw, now))
 

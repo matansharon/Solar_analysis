@@ -73,3 +73,24 @@ def test_devices_alerts_power_energy_round_trip(tmp_path):
 
     energy = client.get(f"/api/plants/{pid}/energy").json()
     assert energy == [{"timestamp_local": "2026-07-06", "energy_kwh": 42.0}]
+
+
+def test_energy_granularity_query_param_isolated_from_default(tmp_path):
+    client, paths = _client(tmp_path)
+    pid = _create_plant(client)
+
+    conn = db.connect(paths.db_path)
+    pd = PlantData(plant_id="growatt-1", source_platform="growatt",
+                   source_plant_id="1", plant_name="G")
+    pd.fetched_at_utc = "2026-07-07T10:00:00+00:00"
+    pd.config_plant_id = pid
+    pd.energy_timeseries = [EnergyPoint("2026-07-06", 42.0, "day"),
+                            EnergyPoint("2026-07", 999.0, "month")]
+    measurements.save_measurements(conn, [pd], TimeRange.LAST_30D, run_id=None)
+    conn.commit(); conn.close()
+
+    day_default = client.get(f"/api/plants/{pid}/energy").json()
+    assert day_default == [{"timestamp_local": "2026-07-06", "energy_kwh": 42.0}]
+
+    month = client.get(f"/api/plants/{pid}/energy?granularity=month").json()
+    assert month == [{"timestamp_local": "2026-07", "energy_kwh": 999.0}]

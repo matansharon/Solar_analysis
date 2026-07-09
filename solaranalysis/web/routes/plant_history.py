@@ -26,6 +26,8 @@ def plant_alerts(pid: int, limit: int = 100, conn=Depends(_conn)):
     return measurements.load_alerts(conn, pid, limit=limit)
 
 
+# No adapter currently populates PlantData.power_timeseries, so this endpoint
+# always returns an empty list on real runs today (infrastructure for future adapter work).
 @router.get("/{pid}/power")
 def plant_power(pid: int, since: str | None = None, conn=Depends(_conn)):
     if not repo.get_plant(conn, pid):
@@ -35,8 +37,8 @@ def plant_power(pid: int, since: str | None = None, conn=Depends(_conn)):
 
 
 @router.get("/{pid}/energy")
-def plant_energy(pid: int, since: str | None = None, conn=Depends(_conn)):
+def plant_energy(pid: int, granularity: str = "day", since: str | None = None, conn=Depends(_conn)):
     if not repo.get_plant(conn, pid):
         return JSONResponse({"detail": "not found"}, status_code=404)
-    points = measurements.load_energy_series(conn, pid, since=since)
+    points = measurements.load_energy_series(conn, pid, granularity=granularity, since=since)
     return [{"timestamp_local": p.timestamp_local, "energy_kwh": p.energy_kwh} for p in points]

@@ -106,6 +106,11 @@ export const api = {
     req<AlertSnapshot[]>("GET", `/api/plants/${id}/alerts?limit=${limit}`),
   plantPower: (id: number, since?: string) =>
     req<SeriesPoint[]>("GET", `/api/plants/${id}/power${since ? `?since=${since}` : ""}`),
-  plantEnergy: (id: number, since?: string) =>
-    req<SeriesPoint[]>("GET", `/api/plants/${id}/energy${since ? `?since=${since}` : ""}`),
+  plantEnergy: (id: number, since?: string, granularity?: string) => {
+    const params = new URLSearchParams();
+    if (since) params.set("since", since);
+    if (granularity) params.set("granularity", granularity);
+    const qs = params.toString();
+    return req<SeriesPoint[]>("GET", `/api/plants/${id}/energy${qs ? `?${qs}` : ""}`);
+  },
 };

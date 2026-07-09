@@ -37,6 +37,19 @@ This project:
 - Backfilling `config_plant_id` (§2) onto rows written before this change —
   they stay `NULL` and simply won't appear on the new Plant Detail page.
 
+### Post-review correction: `power_timeseries` is not actually populated
+
+This spec's Purpose section (and §4) assumed `PlantData.power_timeseries` was
+"already populated by every adapter," matching `devices` and `alerts`. Final
+review of the branch found this false: no adapter (growatt, sma, solaredge)
+constructs a `PowerPoint` or assigns to `power_timeseries` anywhere in the
+codebase. The `power_points` table, its writer in `save_measurements`, the
+`GET /api/plants/{pid}/power` endpoint, and the Power History chart on the
+Plant Detail page are all built correctly per this design, but they process an
+always-empty input and so always show no data on real runs. Populating
+`power_timeseries` in one or more adapters is future work, tracked separately
+and out of scope for this plan.
+
 ## 2. Linking snapshot data to a web-managed plant
 
 `plant_snapshots`/`energy_points` key on `plant_uid` (the *portal's own* site

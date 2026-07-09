@@ -29,7 +29,13 @@ export default function PlantDetail() {
   });
   const energyQuery = useQuery({
     queryKey: ["plantEnergy", id],
-    queryFn: () => api.plantEnergy(id),
+    queryFn: async () => {
+      for (const granularity of ["day", "month", "year"] as const) {
+        const points = await api.plantEnergy(id, undefined, granularity);
+        if (points.length > 0) return points;
+      }
+      return [];
+    },
     enabled: idValid,
   });
   const powerQuery = useQuery({
@@ -78,6 +84,8 @@ export default function PlantDetail() {
         )}
       </section>
 
+      {/* No adapter currently populates power_timeseries, so this chart is always
+          empty on real runs today (infrastructure for future adapter work). */}
       <section style={{ marginBottom: 24 }}>
         <h2>Power history</h2>
         {powerQuery.isLoading ? (

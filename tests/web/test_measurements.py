@@ -63,6 +63,20 @@ def test_energy_points_upsert_latest_wins():
     assert rows[0]["energy_kwh"] == 250.2
 
 
+def test_energy_points_config_plant_id_not_clobbered_by_null():
+    conn = _conn()
+    pd = _plant([EnergyPoint("2026-07-07", 100.0, "day")])
+    pd.config_plant_id = 5
+    measurements.save_measurements(conn, [pd], TimeRange.LAST_30D, run_id=None)
+    # Later CLI re-fetch of the same period never sets config_plant_id.
+    pd2 = _plant([EnergyPoint("2026-07-07", 100.0, "day")])
+    pd2.config_plant_id = None
+    measurements.save_measurements(conn, [pd2], TimeRange.LAST_30D, run_id=None)
+    conn.commit()
+    row = conn.execute("SELECT config_plant_id FROM energy_points").fetchone()
+    assert row["config_plant_id"] == 5
+
+
 def test_null_energy_points_skipped_and_granularities_kept_apart():
     conn = _conn()
     pts = [EnergyPoint("2026-07-06", None, "day"),
@@ -178,6 +192,22 @@ def test_power_points_upsert_latest_wins():
     rows = conn.execute("SELECT power_kw FROM power_points").fetchall()
     assert len(rows) == 1
     assert rows[0]["power_kw"] == 3.5
+
+
+def test_power_points_config_plant_id_not_clobbered_by_null():
+    conn = _conn()
+    p1 = _plant()
+    p1.config_plant_id = 5
+    p1.power_timeseries = [PowerPoint("2026-07-07T10:00", 3.0)]
+    measurements.save_measurements(conn, [p1], TimeRange.SNAPSHOT, run_id=None)
+    # Later CLI re-fetch of the same point never sets config_plant_id.
+    p2 = _plant()
+    p2.config_plant_id = None
+    p2.power_timeseries = [PowerPoint("2026-07-07T10:00", 3.0)]
+    measurements.save_measurements(conn, [p2], TimeRange.SNAPSHOT, run_id=None)
+    conn.commit()
+    row = conn.execute("SELECT config_plant_id FROM power_points").fetchone()
+    assert row["config_plant_id"] == 5
 
 
 def test_load_power_series_orders_and_filters():
