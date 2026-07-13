@@ -255,6 +255,26 @@ credentials into the encrypted database. This does not delete or modify
 `config.yaml`/`.env` — the CLI keeps working against them exactly as before,
 independently of anything managed through the web UI.
 
+### Email delivery
+
+Every web-app run (manual or scheduled) that produces a report — status
+`success` or `partial` — emails the report as an inline-HTML message via
+Microsoft Graph (app-only `sendMail`). `failed` runs send nothing.
+
+Configure it in `.env`:
+
+- `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` — the Azure AD
+  app registration, which must be granted the **Mail.Send application
+  permission** (admin-consented) on `GRAPH_SENDER`.
+- `GRAPH_SENDER` — the mailbox the app sends *as* (default
+  `elcam.ai@elcam.co.il`).
+- `REPORT_RECIPIENTS` — comma-separated recipient list (default: the sender).
+
+If any `GRAPH_*` key is blank or `REPORT_RECIPIENTS` is empty, emailing is
+disabled: the run logs an "email not configured" note and finishes normally.
+A send failure never fails the run — it is logged as a note. The CLI
+(`python -m solaranalysis.cli`) does not email.
+
 ## Development
 
 ```bash

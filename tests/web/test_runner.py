@@ -125,3 +125,102 @@ def test_test_job_reports_result(tmp_path, monkeypatch, capsys):
     res = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
            if "test_result" in l][0]
     assert res["ok"] is True
+
+
+def _seed_run(paths):
+    conn, key = _seed(paths)
+    repo.create_run(conn, trigger="manual", time_range="30d",
+                    log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
+    conn.close()
+
+
+def _success_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    from solaranalysis.core.schema import PlantData
+    return {"report_md": "# R", "plants": [PlantData(
+                plant_id="g", source_platform="growatt",
+                source_plant_id="1", plant_name="Good")],
+            "verify_missing": [], "skipped_plants": []}
+
+
+def test_run_job_emails_on_success(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append((subject, html)))
+    runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    kinds = [json.loads(l[len("@@EVENT@@ "):])["event"]
+             for l in out.splitlines() if l.startswith("@@EVENT@@ ")]
+    assert "report_emailed" in kinds
+    assert len(sent) == 1
+    assert sent[0][0].startswith("Solar Fleet Analysis")
+
+
+def test_run_job_emails_on_partial(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+
+    def partial_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+        return {"report_md": "# R", "plants": [], "verify_missing": [],
+                "skipped_plants": [{"name": "Good", "reason": "boom"}]}
+
+    monkeypatch.setattr(runner, "run_pipeline", partial_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(subject))
+    runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    complete = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+                if "run_complete" in l][0]
+    assert complete["status"] == "partial"
+    assert len(sent) == 1 and "partial" in sent[0]
+
+
+def test_run_job_skips_email_when_unconfigured(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: False)
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(subject))
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert sent == []
+    assert "email not configured" in out
+
+
+def test_run_job_email_failure_is_non_fatal(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+
+    def boom(subject, html):
+        raise RuntimeError("graph down")
+
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report", boom)
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    complete = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+                if "run_complete" in l][0]
+    assert complete["status"] == "success"
+    assert "email send failed" in out
+
+
+def test_collect_secrets_includes_graph_secret(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    conn, key = _seed(paths)
+    cfg, _ = runner.build_app_config(conn, key)
+    conn.close()
+    monkeypatch.setenv("GRAPH_CLIENT_SECRET", "graphsecret")
+    assert "graphsecret" in runner.collect_secrets(cfg)

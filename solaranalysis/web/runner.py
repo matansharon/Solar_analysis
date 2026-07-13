@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import os
 import traceback
 from datetime import datetime, timezone
 
@@ -12,7 +13,7 @@ from ..core.session_store import SessionStore
 from ..core.report import render_html, write_report, append_unavailable_section
 from ..adapters.base import get_adapter
 from ..pipeline import run_pipeline
-from . import db, repo, crypto, events
+from . import db, repo, crypto, events, mailer
 from .paths import Paths
 
 
@@ -40,6 +41,9 @@ def collect_secrets(cfg: AppConfig) -> list[str]:
             out.append(pc.auth.password)
         if pc.auth.token:
             out.append(pc.auth.token)
+    graph_secret = os.getenv("GRAPH_CLIENT_SECRET")
+    if graph_secret:
+        out.append(graph_secret)
     return out
 
 
@@ -93,6 +97,18 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         events.emit_event({"event": "report_written", "path": rel})
 
         status = "partial" if skipped else "success"
+        subject = (f"Solar Fleet Analysis · {status} · {len(res['plants'])} plants "
+                   f"· range {run['time_range']} · {stamp} UTC")
+        try:
+            if mailer.is_configured() and mailer.recipients():
+                mailer.send_report(subject, html)
+                events.emit_event({"event": "report_emailed", "to": mailer.recipients()})
+            else:
+                events.emit_event({"event": "note",
+                                   "reason": "email not configured; skipping"})
+        except Exception as e:
+            events.emit_event({"event": "note",
+                               "reason": red.redact(f"email send failed: {e}")})
         summary = [{"name": p.plant_name, "ok": True} for p in res["plants"]]
         summary += [{"name": s["name"], "ok": False, "reason": s["reason"]} for s in skipped]
         events.emit_event({"event": "run_complete", "status": status,
