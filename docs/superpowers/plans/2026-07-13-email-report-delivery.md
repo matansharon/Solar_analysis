@@ -508,3 +508,190 @@ git commit -m "feat: email report after each web-app run via Graph mailer"
 **2. Placeholder scan:** No TBD/TODO; every code and test step shows complete content. ✓
 
 **3. Type consistency:** `is_configured() -> bool`, `recipients() -> list[str]`, `get_token(tenant, client_id, client_secret, http_post)`, `send_report(subject, html_body, http_post)` — names/signatures identical between the Task 1 module, the Task 1 tests, and the Task 2 runner calls and tests. Event names `report_emailed`/`note` consistent. ✓
+
+---
+
+### Task 3: Email-safe report rendering
+
+**Added after the whole-branch review.** The whole-branch review found that the on-disk report (`core/report.py::render_html`) styles everything through CSS custom properties (`var(--bg)`, etc.) in a `<head><style>` block. Outlook (Word engine) and Gmail don't support CSS variables, so the emailed report renders plain/unstyled. This task adds an email-optimized renderer — **light theme, styles inlined onto each element, no CSS variables, table-wrapper layout** — and sends that variant. The on-disk `render_html` (dark theme) is unchanged.
+
+**Files:**
+- Modify: `solaranalysis/core/report.py` (add `import re`; add `render_email_html` + helpers; do NOT change `render_html`/`write_report`)
+- Test: `tests/test_report.py` (add email-render tests)
+- Modify: `solaranalysis/web/runner.py` (import `render_email_html`; send it instead of the dark `html`)
+- Test: `tests/web/test_runner.py` (add one email-safe-body assertion test)
+- Modify: `README.md` (one sentence in the Email delivery section)
+
+**Interfaces:**
+- Consumes: `md.markdown(...)` (already used by `render_html`).
+- Produces (used by runner): `render_email_html(report_md: str, title: str, subtitle: str) -> str`.
+
+- [ ] **Step 1: Write the failing report tests**
+
+Append to `tests/test_report.py`:
+
+```python
+from solaranalysis.core.report import render_email_html
+
+
+def test_render_email_html_has_no_css_variables():
+    html = render_email_html("# Title\n\nSome text.", "Solar Fleet Analysis", "3 plants")
+    assert "var(" not in html
+    assert ":root" not in html
+
+
+def test_render_email_html_inlines_table_styles():
+    md_table = "| A | B |\n|---|---|\n| 1 | 2 |"
+    html = render_email_html(md_table, "T", "S")
+    assert "<table style=" in html
+    assert "<th style=" in html
+    assert "<td style=" in html
+
+
+def test_render_email_html_includes_title_subtitle_body():
+    html = render_email_html("**bold** words", "My Title", "my subtitle")
+    assert "My Title" in html
+    assert "my subtitle" in html
+    assert "<strong>bold</strong>" in html
+
+
+def test_render_email_html_light_theme_and_inlined_paragraph():
+    html = render_email_html("plain paragraph", "T", "S")
+    assert "#f4f6f8" in html      # light page background
+    assert "<p style=" in html    # paragraph styled inline
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `python -m pytest tests/test_report.py -q`
+Expected: FAIL — `ImportError: cannot import name 'render_email_html'`.
+
+- [ ] **Step 3: Add the email renderer to `core/report.py`**
+
+In `solaranalysis/core/report.py`, add `import re` to the imports (after `import os`). Then add the following (place it after the existing `render_html` function; leave `render_html`, `_CSS`, `_TEMPLATE`, `write_report`, `append_unavailable_section` unchanged):
+
+```python
+# Email-safe rendering: mail clients (Outlook's Word engine, Gmail) do not
+# support CSS custom properties and don't reliably honor <head><style>, so the
+# email body uses a light theme with styles inlined onto each element.
+_EMAIL_BODY_STYLES = {
+    "h1": "margin:0;font-size:24px;color:#12202e;",
+    "h2": "margin:28px 0 8px;font-size:19px;color:#a86500;",
+    "h3": "margin:20px 0 6px;font-size:16px;color:#12202e;",
+    "p": "margin:12px 0;color:#1a2330;font-size:15px;line-height:1.6;",
+    "table": "width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;",
+    "th": "padding:9px 12px;text-align:left;background:#eef2f6;color:#12202e;border:1px solid #d5dde5;",
+    "td": "padding:9px 12px;text-align:left;color:#1a2330;border:1px solid #d5dde5;",
+    "ul": "margin:12px 0;padding-left:22px;color:#1a2330;font-size:15px;line-height:1.6;",
+    "ol": "margin:12px 0;padding-left:22px;color:#1a2330;font-size:15px;line-height:1.6;",
+    "li": "margin:4px 0;",
+    "code": "background:#eef2f6;padding:2px 5px;border-radius:4px;font-family:Consolas,monospace;font-size:13px;",
+    "a": "color:#a86500;",
+}
+_EMAIL_TAG_RE = re.compile(r"<(h1|h2|h3|p|table|th|td|ul|ol|li|code|a)(\s[^>]*)?>")
+
+def _inline_email_styles(html: str) -> str:
+    def repl(m):
+        tag, attrs = m.group(1), m.group(2) or ""
+        if "style=" in attrs:
+            return m.group(0)
+        return f'<{tag}{attrs} style="{_EMAIL_BODY_STYLES[tag]}">'
+    return _EMAIL_TAG_RE.sub(repl, html)
+
+_EMAIL_TEMPLATE = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:Segoe UI,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;">
+<tr><td style="padding:32px 28px;">
+<h1 style="margin:0;font-size:24px;color:#12202e;">{title}</h1>
+<div style="color:#5b6b7b;margin-top:6px;font-size:14px;">{subtitle}</div>
+<div style="border-bottom:2px solid #f5b301;margin:16px 0 24px;font-size:0;line-height:0;">&nbsp;</div>
+{body}
+<div style="margin-top:40px;color:#5b6b7b;font-size:12px;border-top:1px solid #d5dde5;padding-top:16px;">Generated by solar-analysis · figures computed in Python, narrative by Claude.</div>
+</td></tr></table>
+</td></tr></table>
+</body></html>"""
+
+def render_email_html(report_md: str, title: str, subtitle: str) -> str:
+    """Light-theme, inline-styled HTML body for email clients (no CSS
+    variables, no reliance on <head> styles). Mirrors render_html's content
+    but survives Outlook/Gmail. The on-disk report still uses render_html."""
+    body = _inline_email_styles(md.markdown(report_md, extensions=["tables", "fenced_code"]))
+    return _EMAIL_TEMPLATE.format(title=title, subtitle=subtitle, body=body)
+```
+
+- [ ] **Step 4: Run to verify report tests pass**
+
+Run: `python -m pytest tests/test_report.py -q`
+Expected: PASS (4 new + existing report tests).
+
+- [ ] **Step 5: Send the email-safe body from the runner**
+
+In `solaranalysis/web/runner.py`, add `render_email_html` to the report import (currently line 12):
+
+```python
+from ..core.report import render_html, write_report, append_unavailable_section
+```
+becomes:
+```python
+from ..core.report import (render_html, render_email_html, write_report,
+                           append_unavailable_section)
+```
+
+Then in the email hook, change the send call from:
+```python
+                mailer.send_report(subject, html)
+```
+to:
+```python
+                mailer.send_report(
+                    subject,
+                    render_email_html(report_md, "Solar Fleet Analysis", subtitle))
+```
+
+(`report_md` and `subtitle` are already in scope at the hook — see runner lines 86 and 88.)
+
+- [ ] **Step 6: Add a runner test for the email-safe body**
+
+Append to `tests/web/test_runner.py` (reuses the `_seed_run` and `_success_pipeline` helpers added in Task 2):
+
+```python
+def test_run_job_emails_email_safe_body(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(html))
+    runner.run_analysis_job(paths, run_id=1)
+    assert len(sent) == 1
+    assert "var(" not in sent[0]     # CSS custom properties not used in email body
+    assert "style=" in sent[0]       # styles are inlined
+```
+
+- [ ] **Step 7: Run the full backend suite**
+
+Run: `python -m pytest -q`
+Expected: PASS — all prior tests plus the new report + runner tests (no regressions).
+
+- [ ] **Step 8: Update the README**
+
+In `README.md`, in the "Email delivery" subsection, add this sentence at the end of the first paragraph (after "…`failed` runs send nothing."):
+
+```markdown
+The email body is rendered in an email-optimized light theme with inline
+styles (Outlook/Gmail don't support the on-disk report's CSS variables); the
+`report.html` saved on disk keeps its full styling.
+```
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add solaranalysis/core/report.py tests/test_report.py solaranalysis/web/runner.py tests/web/test_runner.py README.md
+git commit -m "feat: render email-safe (light, inline-styled) report body for delivery"
+```
