@@ -10,7 +10,8 @@ from ..config import AppConfig, PlantConfig
 from ..core import measurements
 from ..core.schema import TimeRange
 from ..core.session_store import SessionStore
-from ..core.report import render_html, write_report, append_unavailable_section
+from ..core.report import (render_html, render_email_html, write_report,
+                           append_unavailable_section)
 from ..adapters.base import get_adapter
 from ..pipeline import run_pipeline
 from . import db, repo, crypto, events, mailer
@@ -101,7 +102,9 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                    f"· range {run['time_range']} · {stamp} UTC")
         try:
             if mailer.is_configured() and mailer.recipients():
-                mailer.send_report(subject, html)
+                mailer.send_report(
+                    subject,
+                    render_email_html(report_md, "Solar Fleet Analysis", subtitle))
                 events.emit_event({"event": "report_emailed", "to": mailer.recipients()})
             else:
                 events.emit_event({"event": "note",

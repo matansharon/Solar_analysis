@@ -260,6 +260,9 @@ independently of anything managed through the web UI.
 Every web-app run (manual or scheduled) that produces a report — status
 `success` or `partial` — emails the report as an inline-HTML message via
 Microsoft Graph (app-only `sendMail`). `failed` runs send nothing.
+The email body is rendered in an email-optimized light theme with inline
+styles (Outlook/Gmail don't support the on-disk report's CSS variables); the
+`report.html` saved on disk keeps its full styling.
 
 Configure it in `.env`:
 

@@ -217,6 +217,21 @@ def test_run_job_email_failure_is_non_fatal(tmp_path, monkeypatch, capsys):
     assert "email send failed" in out
 
 
+def test_run_job_emails_email_safe_body(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(html))
+    runner.run_analysis_job(paths, run_id=1)
+    assert len(sent) == 1
+    assert "var(" not in sent[0]     # CSS custom properties not used in email body
+    assert "style=" in sent[0]       # styles are inlined
+
+
 def test_collect_secrets_includes_graph_secret(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     conn, key = _seed(paths)

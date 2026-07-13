@@ -23,3 +23,33 @@ def test_write_report_creates_file(tmp_path):
     assert Path(path).exists()
     assert Path(path).name == "report.html"
     assert "Health" in Path(path).read_text(encoding="utf-8")
+
+
+from solaranalysis.core.report import render_email_html
+
+
+def test_render_email_html_has_no_css_variables():
+    html = render_email_html("# Title\n\nSome text.", "Solar Fleet Analysis", "3 plants")
+    assert "var(" not in html
+    assert ":root" not in html
+
+
+def test_render_email_html_inlines_table_styles():
+    md_table = "| A | B |\n|---|---|\n| 1 | 2 |"
+    html = render_email_html(md_table, "T", "S")
+    assert "<table style=" in html
+    assert "<th style=" in html
+    assert "<td style=" in html
+
+
+def test_render_email_html_includes_title_subtitle_body():
+    html = render_email_html("**bold** words", "My Title", "my subtitle")
+    assert "My Title" in html
+    assert "my subtitle" in html
+    assert "<strong>bold</strong>" in html
+
+
+def test_render_email_html_light_theme_and_inlined_paragraph():
+    html = render_email_html("plain paragraph", "T", "S")
+    assert "#f4f6f8" in html      # light page background
+    assert "<p style=" in html    # paragraph styled inline
