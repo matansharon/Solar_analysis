@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from .config import load_config
 from .core.schema import TimeRange
 from .core.session_store import SessionStore
-from .core.report import render_html, write_report, append_unavailable_section
+from .core.report import (render_html, write_report, append_unavailable_section,
+                          prepend_summary)
+from .core.analyze import summarize_executive
 from .pipeline import run_pipeline
 
 def main(argv=None):
@@ -61,6 +63,14 @@ def main(argv=None):
         detail = "; ".join(f"{s['name']} ({s['reason']})" for s in res["skipped_plants"])
         print(f"[warn] {n} plant(s) unavailable: {detail}", file=sys.stderr)
         report_md = append_unavailable_section(report_md, res["skipped_plants"])
+
+    if res["plants"]:
+        try:
+            summary_md = summarize_executive(res["report_md"])
+            report_md = prepend_summary(report_md, summary_md)
+            print("[note] Hebrew executive summary added", file=sys.stderr)
+        except Exception as e:
+            print(f"[warn] executive summary skipped: {e}", file=sys.stderr)
 
     html = render_html(report_md, title, subtitle)
     path = write_report(html, out_dir)

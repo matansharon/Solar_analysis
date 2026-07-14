@@ -53,3 +53,34 @@ def test_render_email_html_light_theme_and_inlined_paragraph():
     html = render_email_html("plain paragraph", "T", "S")
     assert "#f4f6f8" in html      # light page background
     assert "<p style=" in html    # paragraph styled inline
+
+
+from solaranalysis.core.report import prepend_summary
+
+
+def test_prepend_summary_places_summary_first_rtl():
+    out = prepend_summary("## Production & Performance\n\nMain body.",
+                          "**סיכום:** הכל תקין.")
+    assert 'dir="rtl"' in out
+    assert "סיכום מנהלים" in out
+    # The summary and its content precede the detailed report body.
+    assert out.index("סיכום מנהלים") < out.index("Production & Performance")
+    assert out.index("הכל תקין") < out.index("Main body")
+
+
+def test_render_html_renders_rtl_summary():
+    doc = prepend_summary("## Production & Performance\n\nMain body.",
+                          "- שורה ראשונה")
+    html = render_html(doc, "T", "S")
+    # RTL wrapper is preserved and its inner markdown is rendered (md_in_html on).
+    assert 'dir="rtl"' in html
+    assert "<h2" in html and "סיכום מנהלים" in html
+    assert "<li>שורה ראשונה</li>" in html
+
+
+def test_render_email_html_renders_rtl_summary():
+    doc = prepend_summary("## Production & Performance\n\nMain body.",
+                          "טקסט בעברית")
+    html = render_email_html(doc, "T", "S")
+    assert 'dir="rtl"' in html
+    assert "טקסט בעברית" in html

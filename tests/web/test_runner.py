@@ -1,6 +1,14 @@
 import json
+import pytest
 from solaranalysis.web import db, repo, crypto, runner
 from solaranalysis.web.paths import Paths
+
+
+@pytest.fixture(autouse=True)
+def _stub_exec_summary(monkeypatch):
+    # Never hit the network for the executive-summary call in runner tests.
+    monkeypatch.setattr(runner, "summarize_executive",
+                        lambda report_md: "**סיכום בדיקה**", raising=False)
 
 
 def _paths(tmp_path):
@@ -239,3 +247,35 @@ def test_collect_secrets_includes_graph_secret(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setenv("GRAPH_CLIENT_SECRET", "graphsecret")
     assert "graphsecret" in runner.collect_secrets(cfg)
+
+
+def test_run_job_notes_executive_summary(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    events = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+              if l.startswith("@@EVENT@@ ")]
+    notes = [e.get("reason", "") for e in events if e["event"] == "note"]
+    assert any("executive summary" in r for r in notes)
+    complete = [e for e in events if e["event"] == "run_complete"][0]
+    assert complete["status"] == "success"
+
+
+def test_run_job_summary_failure_is_non_fatal(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+
+    def boom(report_md):
+        raise RuntimeError("opus down")
+    monkeypatch.setattr(runner, "summarize_executive", boom)
+
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    complete = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+                if "run_complete" in l][0]
+    assert complete["status"] == "success"
+    assert "executive summary skipped" in out

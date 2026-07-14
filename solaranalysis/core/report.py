@@ -22,6 +22,9 @@ th { background:#1d2c3d; color: var(--ink); }
 code { background:#0b1219; padding:2px 5px; border-radius:4px; }
 footer { margin-top: 56px; color: var(--muted); font-size: 13px;
   border-top: 1px solid #24344a; padding-top: 16px; }
+[dir=rtl] { text-align: right; }
+[dir=rtl] h2 { border-left: 0; border-right: 4px solid var(--accent);
+  padding-left: 0; padding-right: 12px; }
 """
 
 _TEMPLATE = """<!doctype html>
@@ -35,7 +38,7 @@ _TEMPLATE = """<!doctype html>
 </div></body></html>"""
 
 def render_html(report_md: str, title: str, subtitle: str) -> str:
-    body = md.markdown(report_md, extensions=["tables", "fenced_code"])
+    body = md.markdown(report_md, extensions=["tables", "fenced_code", "md_in_html"])
     return _TEMPLATE.format(title=title, subtitle=subtitle, css=_CSS, body=body)
 
 # Email-safe rendering: mail clients (Outlook's Word engine, Gmail) do not
@@ -86,7 +89,8 @@ def render_email_html(report_md: str, title: str, subtitle: str) -> str:
     """Light-theme, inline-styled HTML body for email clients (no CSS
     variables, no reliance on <head> styles). Mirrors render_html's content
     but survives Outlook/Gmail. The on-disk report still uses render_html."""
-    body = _inline_email_styles(md.markdown(report_md, extensions=["tables", "fenced_code"]))
+    body = _inline_email_styles(md.markdown(
+        report_md, extensions=["tables", "fenced_code", "md_in_html"]))
     return _EMAIL_TEMPLATE.format(title=title, subtitle=subtitle, body=body)
 
 def write_report(html: str, out_dir: str) -> str:
@@ -103,3 +107,12 @@ def append_unavailable_section(report_md: str, skipped: list[dict]) -> str:
                       for s in skipped)
     return (report_md + "\n\n## Unavailable Plants\n\nThe following plants "
             "could not be fetched for this run:\n\n" + lines)
+
+def prepend_summary(report_md: str, summary_md: str) -> str:
+    """Put a Hebrew executive summary ("סיכום מנהלים") at the top of the report,
+    in a right-to-left block, above the detailed analysis. The `markdown="1"`
+    div + blank line lets the md_in_html extension render the inner markdown."""
+    return ('<div dir="rtl" markdown="1">\n\n'
+            '## סיכום מנהלים\n\n'
+            f'{summary_md}\n\n'
+            '</div>\n\n---\n\n' + report_md)

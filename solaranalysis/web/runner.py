@@ -11,7 +11,8 @@ from ..core import measurements
 from ..core.schema import TimeRange
 from ..core.session_store import SessionStore
 from ..core.report import (render_html, render_email_html, write_report,
-                           append_unavailable_section)
+                           append_unavailable_section, prepend_summary)
+from ..core.analyze import summarize_executive
 from ..adapters.base import get_adapter
 from ..pipeline import run_pipeline
 from . import db, repo, crypto, events, mailer
@@ -89,6 +90,15 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         skipped = [{"name": s["name"], "reason": red.redact(str(s["reason"]))}
                    for s in res["skipped_plants"]]
         report_md = append_unavailable_section(res["report_md"], skipped)
+        if res["plants"]:
+            try:
+                summary_md = summarize_executive(res["report_md"])
+                report_md = prepend_summary(report_md, summary_md)
+                events.emit_event({"event": "note",
+                                   "reason": "Hebrew executive summary added"})
+            except Exception as e:
+                events.emit_event({"event": "note",
+                                   "reason": red.redact(f"executive summary skipped: {e}")})
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         subtitle = f"{len(res['plants'])} plants · range {run['time_range']} · {stamp} UTC"
         html = render_html(report_md, "Solar Fleet Analysis", subtitle)

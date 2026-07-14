@@ -1,5 +1,6 @@
 from solaranalysis.core.schema import PlantData, Metric, EnergyPoint, TimeRange
-from solaranalysis.core.analyze import build_data_block, pick_model, verify_numbers, run_analysis
+from solaranalysis.core.analyze import (build_data_block, pick_model, verify_numbers,
+                                        run_analysis, summarize_executive)
 from solaranalysis.config import AppConfig
 
 def _plant(name, kwp, life):
@@ -104,3 +105,40 @@ def test_run_analysis_drops_series_to_fit_token_budget():
     user_content = client.kwargs["messages"][0]["content"]
     assert "period,energy_kwh" not in user_content
     assert "series omitted" in user_content
+
+
+class _HebrewMsg:
+    content = [type("B", (), {"type": "text",
+                              "text": "**סיכום:** התחנה המובילה תקינה."})()]
+
+
+class _HebrewClient:
+    def __init__(self):
+        client = self
+        class messages:
+            @staticmethod
+            def create(**kw):
+                client.kwargs = kw
+                return _HebrewMsg()
+        self.messages = messages
+
+
+def test_summarize_executive_uses_injected_client():
+    out = summarize_executive("## Production & Performance\nPlant A leads.",
+                              client=_HebrewClient())
+    assert out == "**סיכום:** התחנה המובילה תקינה."
+
+
+def test_summarize_executive_request_shape():
+    report_md = "## Production & Performance\nPlant A produced 5000 kWh."
+    client = _HebrewClient()
+    summarize_executive(report_md, client=client)
+    kw = client.kwargs
+    # Opus 4.8 at "xhigh" reasoning = effort xhigh + adaptive thinking.
+    assert kw["model"] == "claude-opus-4-8"
+    assert kw["output_config"] == {"effort": "xhigh"}
+    assert kw["thinking"] == {"type": "adaptive"}
+    # The report being summarized is handed to the model.
+    assert report_md in kw["messages"][0]["content"]
+    # Sampling params 400 on Opus 4.8 — they must not be sent.
+    assert "temperature" not in kw and "top_p" not in kw and "top_k" not in kw

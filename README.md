@@ -105,6 +105,15 @@ narrative, so figures cannot be hallucinated. A post-generation `verify_numbers`
 check flags any figure in the narrative not traceable to the data block
 (rounded/derived deltas may legitimately appear).
 
+**Executive summary (Hebrew):** After the report is generated, a second Claude
+call (**Opus 4.8** at "xhigh" reasoning — `effort: xhigh` + adaptive thinking)
+distills it into a concise Hebrew executive summary ("סיכום מנהלים"), prepended
+to the top of the report. It appears in both the on-disk `report.html` and the
+emailed body, for both the CLI and the web app, and it summarizes only what the
+report already states (no new figures). `verify_numbers` still runs on the
+detailed report only. If the summary call fails it is skipped non-fatally — the
+run still delivers the detailed report, with a note.
+
 ## Data coverage notes
 
 Each portal exposes a different subset; missing metrics are marked

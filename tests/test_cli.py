@@ -1,6 +1,15 @@
+import pytest
+
 import solaranalysis.cli as cli
 from solaranalysis.config import AppConfig
 from solaranalysis.core.schema import PlantData
+
+
+@pytest.fixture(autouse=True)
+def _stub_exec_summary(monkeypatch):
+    # Never hit the network for the executive-summary call in CLI tests.
+    monkeypatch.setattr(cli, "summarize_executive",
+                        lambda report_md: "**סיכום בדיקה**", raising=False)
 
 
 def _pd(name):
@@ -46,3 +55,20 @@ def test_cli_warns_when_ranged_report_has_no_series(tmp_path, monkeypatch, capsy
     _run(tmp_path, monkeypatch, [], extra_args=("--range", "12mo"))
     err = capsys.readouterr().err
     assert "counters" in err  # no historical series -> counters-only note
+
+
+def test_cli_prepends_hebrew_executive_summary(tmp_path, monkeypatch):
+    html = _run(tmp_path, monkeypatch, [])
+    assert "סיכום מנהלים" in html        # the summary heading
+    assert "סיכום בדיקה" in html         # the stubbed summary body
+    # Summary appears above the detailed report.
+    assert html.index("סיכום מנהלים") < html.index("Report")
+
+
+def test_cli_summary_failure_is_nonfatal(tmp_path, monkeypatch):
+    def boom(report_md):
+        raise RuntimeError("opus down")
+    monkeypatch.setattr(cli, "summarize_executive", boom)
+    html = _run(tmp_path, monkeypatch, [])   # still returns 0 and writes report
+    assert "סיכום מנהלים" not in html         # summary skipped, not fatal
+    assert "Report" in html

@@ -10,6 +10,8 @@ from . import units
 from ..config import AppConfig
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "system.txt"
+_EXEC_SUMMARY_PROMPT_PATH = (Path(__file__).resolve().parent.parent
+                             / "prompts" / "exec_summary.txt")
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 def pick_model(cfg: AppConfig, time_range: TimeRange, plants=None) -> str:
@@ -122,6 +124,9 @@ def verify_numbers(report_md: str, data_block: str) -> list[str]:
 def _system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
+def _exec_summary_prompt() -> str:
+    return _EXEC_SUMMARY_PROMPT_PATH.read_text(encoding="utf-8")
+
 def _estimate_tokens(text: str) -> int:
     return len(text) // 4 + 1  # ~4 chars/token heuristic
 
@@ -146,6 +151,29 @@ def run_analysis(plants, time_range, cfg: AppConfig, client=None) -> str:
         model=model,
         max_tokens=16000,
         system=[{"type": "text", "text": _system_prompt(),
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+
+def summarize_executive(report_md: str, client=None) -> str:
+    """Distill an already-generated report into a concise Hebrew executive
+    summary ("סיכום מנהלים"), returned as markdown.
+
+    Uses Claude Opus 4.8 at "xhigh" reasoning — on Opus 4.8 that is
+    output_config effort="xhigh" plus adaptive thinking (the fixed
+    thinking.budget_tokens knob is rejected there). `client` is injectable for
+    tests, mirroring run_analysis."""
+    if client is None:
+        import anthropic
+        client = anthropic.Anthropic()
+    user = report_md + "\n\nכתוב סיכום מנהלים תמציתי בעברית של הדוח שלמעלה."
+    msg = client.messages.create(
+        model="claude-opus-4-8",
+        max_tokens=16000,
+        thinking={"type": "adaptive"},
+        output_config={"effort": "xhigh"},
+        system=[{"type": "text", "text": _exec_summary_prompt(),
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
