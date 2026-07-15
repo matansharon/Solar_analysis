@@ -255,6 +255,16 @@ def test_collect_secrets_includes_graph_secret(tmp_path, monkeypatch):
     assert "graphsecret" in runner.collect_secrets(cfg)
 
 
+def test_graph_is_unconfigured_in_tests():
+    # Regression: the test environment must never expose real Graph creds. The
+    # runner tests that don't stub the mailer would otherwise send REAL email
+    # (fixture content) to the real recipient whenever a developer's shell has
+    # GRAPH_* set. A conftest fixture scrubs them for every test.
+    from solaranalysis.web import mailer
+    assert mailer.is_configured() is False
+    assert mailer.recipients() == []
+
+
 def test_run_job_notes_executive_summary(tmp_path, monkeypatch, capsys):
     paths = _paths(tmp_path)
     _seed_run(paths)
