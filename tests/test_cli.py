@@ -6,10 +6,15 @@ from solaranalysis.core.schema import PlantData
 
 
 @pytest.fixture(autouse=True)
-def _stub_exec_summary(monkeypatch):
-    # Never hit the network for the executive-summary call in CLI tests.
+def _stub_llm_calls(monkeypatch):
+    # Never hit the network for the LLM calls in CLI tests (render_charts is
+    # pure Python and stays real).
     monkeypatch.setattr(cli, "summarize_executive",
                         lambda report_md: "**סיכום בדיקה**", raising=False)
+    monkeypatch.setattr(cli, "design_charts", lambda data_summary: [], raising=False)
+    monkeypatch.setattr(cli, "compose_dashboard",
+                        lambda summary_md, charts_html: "<html>dash</html>",
+                        raising=False)
 
 
 def _pd(name):
@@ -72,3 +77,33 @@ def test_cli_summary_failure_is_nonfatal(tmp_path, monkeypatch):
     html = _run(tmp_path, monkeypatch, [])   # still returns 0 and writes report
     assert "סיכום מנהלים" not in html         # summary skipped, not fatal
     assert "Report" in html
+
+
+def test_cli_writes_dashboard(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "load_config", lambda path: AppConfig())
+    monkeypatch.setattr(cli, "run_pipeline",
+                        lambda cfg, tr, ss, **kw: _fake_pipeline_result([]))
+    monkeypatch.setattr(cli, "compose_dashboard",
+                        lambda summary_md, charts_html: "<html>DASH-MARKER</html>")
+    out = tmp_path / "out"
+    rc = cli.main(["--config", "x", "--out", str(out),
+                   "--cache-dir", str(tmp_path / "c"), "--no-persist"])
+    assert rc == 0
+    dash = out / "dashboard.html"
+    assert dash.exists()
+    assert "DASH-MARKER" in dash.read_text(encoding="utf-8")
+
+
+def test_cli_dashboard_failure_is_nonfatal(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "load_config", lambda path: AppConfig())
+    monkeypatch.setattr(cli, "run_pipeline",
+                        lambda cfg, tr, ss, **kw: _fake_pipeline_result([]))
+    def boom(data_summary):
+        raise RuntimeError("charts down")
+    monkeypatch.setattr(cli, "design_charts", boom)
+    out = tmp_path / "out"
+    rc = cli.main(["--config", "x", "--out", str(out),
+                   "--cache-dir", str(tmp_path / "c"), "--no-persist"])
+    assert rc == 0                                   # non-fatal
+    assert (out / "report.html").exists()            # report still written
+    assert not (out / "dashboard.html").exists()     # dashboard skipped

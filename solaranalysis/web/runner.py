@@ -11,8 +11,10 @@ from ..core import measurements
 from ..core.schema import TimeRange
 from ..core.session_store import SessionStore
 from ..core.report import (render_html, render_email_html, write_report,
-                           append_unavailable_section, prepend_summary)
-from ..core.analyze import summarize_executive
+                           write_dashboard, append_unavailable_section, prepend_summary)
+from ..core.analyze import summarize_executive, build_data_block, default_meta
+from ..core.charts import design_charts, render_charts
+from ..core.dashboard import compose_dashboard
 from ..adapters.base import get_adapter
 from ..pipeline import run_pipeline
 from . import db, repo, crypto, events, mailer
@@ -90,6 +92,7 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         skipped = [{"name": s["name"], "reason": red.redact(str(s["reason"]))}
                    for s in res["skipped_plants"]]
         report_md = append_unavailable_section(res["report_md"], skipped)
+        summary_md = None
         if res["plants"]:
             try:
                 summary_md = summarize_executive(res["report_md"])
@@ -107,15 +110,36 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         rel = f"output/{stamp}/report.html"
         events.emit_event({"event": "report_written", "path": rel})
 
+        # Executive dashboard: model-designed / Python-rendered grounded charts +
+        # the Hebrew summary, composed into one email-safe HTML. It is what gets
+        # emailed when available; the detailed report.html stays on disk.
+        dashboard_html = None
+        if res["plants"] and summary_md:
+            try:
+                specs = design_charts(build_data_block(
+                    res["plants"], time_range, default_meta(res["plants"])))
+                charts_html = render_charts(specs, res["plants"])
+                dashboard_html = compose_dashboard(summary_md, charts_html)
+                write_dashboard(dashboard_html, out_dir)
+                events.emit_event({"event": "dashboard_written",
+                                   "path": f"output/{stamp}/dashboard.html",
+                                   "charts": len(specs)})
+            except Exception as e:
+                dashboard_html = None
+                events.emit_event({"event": "note",
+                                   "reason": red.redact(f"dashboard skipped: {e}")})
+
         status = "partial" if skipped else "success"
         subject = (f"Solar Fleet Analysis · {status} · {len(res['plants'])} plants "
                    f"· range {run['time_range']} · {stamp} UTC")
         try:
             if mailer.is_configured() and mailer.recipients():
-                mailer.send_report(
-                    subject,
-                    render_email_html(report_md, "Solar Fleet Analysis", subtitle))
-                events.emit_event({"event": "report_emailed", "to": mailer.recipients()})
+                body = dashboard_html or render_email_html(
+                    report_md, "Solar Fleet Analysis", subtitle)
+                mailer.send_report(subject, body)
+                events.emit_event({"event": "report_emailed",
+                                   "to": mailer.recipients(),
+                                   "body": "dashboard" if dashboard_html else "report"})
             else:
                 events.emit_event({"event": "note",
                                    "reason": "email not configured; skipping"})

@@ -5,10 +5,16 @@ from solaranalysis.web.paths import Paths
 
 
 @pytest.fixture(autouse=True)
-def _stub_exec_summary(monkeypatch):
-    # Never hit the network for the executive-summary call in runner tests.
+def _stub_llm_calls(monkeypatch):
+    # Never hit the network for LLM calls in runner tests (render_charts is
+    # pure Python and stays real).
     monkeypatch.setattr(runner, "summarize_executive",
                         lambda report_md: "**סיכום בדיקה**", raising=False)
+    monkeypatch.setattr(runner, "design_charts", lambda data_summary: [], raising=False)
+    monkeypatch.setattr(runner, "compose_dashboard",
+                        lambda summary_md, charts_html:
+                        '<html><body style="margin:0">dash</body></html>',
+                        raising=False)
 
 
 def _paths(tmp_path):
@@ -279,3 +285,52 @@ def test_run_job_summary_failure_is_non_fatal(tmp_path, monkeypatch, capsys):
                 if "run_complete" in l][0]
     assert complete["status"] == "success"
     assert "executive summary skipped" in out
+
+
+def test_run_job_writes_and_emails_dashboard(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    monkeypatch.setattr(runner, "design_charts",
+                        lambda data_summary: [{"metric": "energy_today",
+                                               "title": "E", "insight": "i"}])
+    monkeypatch.setattr(runner, "compose_dashboard",
+                        lambda summary_md, charts_html:
+                        '<html><body style="margin:0">DASH-MARKER</body></html>')
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(html))
+    runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    events = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+              if l.startswith("@@EVENT@@ ")]
+    kinds = [e["event"] for e in events]
+    assert "dashboard_written" in kinds
+    emailed = [e for e in events if e["event"] == "report_emailed"][0]
+    assert emailed["body"] == "dashboard"
+    assert len(sent) == 1 and "DASH-MARKER" in sent[0]
+
+
+def test_run_job_dashboard_failure_falls_back_to_report_email(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+
+    def boom(data_summary):
+        raise RuntimeError("charts down")
+    monkeypatch.setattr(runner, "design_charts", boom)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(html))
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "dashboard skipped" in out
+    emailed = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+               if "report_emailed" in l][0]
+    assert emailed["body"] == "report"            # fell back to detailed report
+    assert len(sent) == 1

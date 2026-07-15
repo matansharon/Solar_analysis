@@ -100,6 +100,13 @@ def write_report(html: str, out_dir: str) -> str:
         f.write(html)
     return path
 
+def write_dashboard(html: str, out_dir: str) -> str:
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "dashboard.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
 def append_unavailable_section(report_md: str, skipped: list[dict]) -> str:
     if not skipped:
         return report_md
