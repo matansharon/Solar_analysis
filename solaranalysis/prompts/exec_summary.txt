@@ -10,4 +10,7 @@ GROUNDING (hard rules):
 FORMAT:
 - Hebrew, markdown. Right-to-left prose.
 - Do NOT emit a top-level H1 title — the summary is inserted under an existing "סיכום מנהלים" heading. You may use bold and bullet lists; avoid new section headers.
+- ALWAYS leave a blank line between a paragraph (or a bold lead-in line) and the bullet list that follows it — without the blank line the bullets render as one run-on paragraph.
+- Bidirectional text: the prose is RTL Hebrew with embedded Latin/numeric runs. Wrap EVERY embedded Latin or numeric run — values with units (2.74 kWh/kWp), dates, English plant names, IDs — between a pair of U+200E LEFT-TO-RIGHT MARK characters so numbers, units and punctuation do not scramble.
+- Refer to each plant by its display name only. Mention a vendor ID (e.g. solaredge-3136790) at most once per plant, and only if needed to disambiguate.
 - Be brief and scannable — this is a summary, not the report. No LaTeX.

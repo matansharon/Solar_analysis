@@ -129,6 +129,34 @@ def test_summarize_executive_uses_injected_client():
     assert out == "**סיכום:** התחנה המובילה תקינה."
 
 
+class _TextClient:
+    def __init__(self, text):
+        client = self
+
+        class messages:
+            @staticmethod
+            def create(**kw):
+                client.kwargs = kw
+                return type("M", (), {"content": [
+                    type("B", (), {"type": "text", "text": text})()]})()
+        self.messages = messages
+
+
+def test_summarize_executive_inserts_blank_line_before_lists():
+    # Models often emit "**header:**\n- item" with no blank line before the
+    # list; python-markdown then renders the bullets as literal " - " text
+    # inside one run-on <p>. The summary must come back normalized.
+    raw = "**תקלות:**\n- אחת\n- שתיים\n\nפסקה."
+    out = summarize_executive("report", client=_TextClient(raw))
+    assert "**תקלות:**\n\n- אחת\n- שתיים" in out
+
+
+def test_summarize_executive_leaves_wellformed_lists_alone():
+    raw = "פסקה.\n\n- אחת\n- שתיים"
+    out = summarize_executive("report", client=_TextClient(raw))
+    assert out == raw
+
+
 def test_summarize_executive_request_shape():
     report_md = "## Production & Performance\nPlant A produced 5000 kWh."
     client = _HebrewClient()

@@ -127,6 +127,14 @@ def _system_prompt() -> str:
 def _exec_summary_prompt() -> str:
     return _EXEC_SUMMARY_PROMPT_PATH.read_text(encoding="utf-8")
 
+# A non-bullet line directly followed by a bullet line. python-markdown only
+# recognizes a list when a blank line separates it from the paragraph above;
+# models routinely omit it, collapsing the bullets into one run-on <p>.
+_LIST_AFTER_TEXT_RE = re.compile(r"(?m)^(?![-*+] )(\S.*)\n(?=[-*+] )")
+
+def _ensure_list_breaks(text: str) -> str:
+    return _LIST_AFTER_TEXT_RE.sub(r"\1\n\n", text)
+
 def _estimate_tokens(text: str) -> int:
     return len(text) // 4 + 1  # ~4 chars/token heuristic
 
@@ -177,4 +185,5 @@ def summarize_executive(report_md: str, client=None) -> str:
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
-    return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    return _ensure_list_breaks(text)
