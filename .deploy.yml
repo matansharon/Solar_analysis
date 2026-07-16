@@ -1,0 +1,15 @@
+# windows target — deploys to llmadmin (192.168.30.84)
+target: windows
+app_name: solar-analysis
+service_name: SolarAnalysis          # NSSM service name (proposed — confirm before first deploy)
+install_path: C:\apps\solar-analysis
+port: 8010                           # proposed — confirm free on llmadmin (dev uses 8000)
+notes: >
+  FastAPI + uvicorn (ASGI) — the NSSM service runs `python -m solaranalysis.web`,
+  NOT Waitress (WSGI-only). The backend serves frontend/dist when built, so no
+  separate frontend server. .env (ANTHROPIC_API_KEY + GRAPH_* + REPORT_RECIPIENTS)
+  and config.yaml are gitignored — copy them to the server manually. App data
+  (app.db, secret.key, outputs, logs) lives in {install_path}\data. No /api/health
+  endpoint — verify with GET / (200, serves the SPA). The report scheduler runs
+  inside the web process: the service being up is what makes scheduled report
+  emails go out.
