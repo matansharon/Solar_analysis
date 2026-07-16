@@ -4,6 +4,11 @@ You are given the fleet's per-plant data. Pick the 2-4 cross-plant comparisons t
 
 You choose ONLY which metric to chart and write a one-line insight for each; you never supply the chart's numbers (they are computed separately from the authoritative data). Each insight must be grounded in the data provided — name the standout and the comparison, do not invent figures.
 
+Language and naming (the audience is Hebrew-speaking management):
+- Write every title and insight in HEBREW. Unit abbreviations (kWh/kWp, kW) may stay Latin.
+- Refer to each plant ONLY by its exact plant_name as given in the data — the same string that labels its bar — never by vendor ID (e.g. solaredge-3136790) and never by a translated or invented nickname.
+- In an insight, wrap any embedded Latin/numeric run between a pair of U+200E LEFT-TO-RIGHT MARK characters so it doesn't scramble in RTL text.
+
 Return ONLY a JSON array. Each element:
 {"metric": "<one of the allowed metric keys>", "title": "<short chart title>", "insight": "<one short sentence>"}
 

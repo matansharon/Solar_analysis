@@ -86,10 +86,8 @@ def design_charts(data_summary: str, client=None) -> list[dict]:
     return _parse_specs(text)
 
 
-def _fmt(v: float) -> str:
-    if v == int(v):
-        return f"{int(v):,}"
-    return f"{v:,.2f}".rstrip("0").rstrip(".")
+def _fmt(v: float, decimals: int) -> str:
+    return f"{v:,.{decimals}f}"
 
 
 def _one_chart(spec: dict, plants: list[PlantData]) -> str:
@@ -98,30 +96,39 @@ def _one_chart(spec: dict, plants: list[PlantData]) -> str:
             for pd in plants if extract(pd) is not None]
     if not rows:
         return ""
+    rows.sort(key=lambda r: r[1], reverse=True)   # leader first
     maxv = max(v for _, v in rows) or 1.0
+    # Uniform precision per chart so values align and compare cleanly.
+    decimals = 0 if maxv >= 1000 else (1 if maxv >= 10 else 2)
     bars = []
     for name, v in rows:
-        pct = max(2, round(v / maxv * 85))   # cap at 85% so the value label fits
+        pct = max(2, round(v / maxv * 100))
         bars.append(
             '<tr>'
-            f'<td style="padding:4px 8px 4px 0;font-size:13px;color:#1a2330;">'
+            f'<td style="padding:5px 0;font-size:13px;color:#1a2330;">'
             f'{_escape(name)}</td>'
-            '<td style="padding:4px 0;width:99%;">'
-            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
-            f'<td width="{pct}%" style="background:{_BAR_COLOR};height:16px;'
-            'border-radius:3px;font-size:0;line-height:0;">&nbsp;</td>'
-            '<td style="padding-left:8px;font-size:13px;color:#1a2330;'
-            f'white-space:nowrap;">{_fmt(v)} {_escape(unit)}</td>'
-            '</tr></table></td></tr>')
+            '<td style="padding:5px 10px;width:99%;">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            f'style="background:{_BAR_TRACK};border-radius:7px;"><tr>'
+            f'<td width="{pct}%" height="14" style="background:{_BAR_COLOR};'
+            'height:14px;border-radius:7px;font-size:0;line-height:0;">&nbsp;</td>'
+            '<td style="font-size:0;line-height:0;">&nbsp;</td>'
+            '</tr></table></td>'
+            f'<td dir="ltr" width="110" style="padding:5px 0;font-size:13px;'
+            'color:#1a2330;white-space:nowrap;text-align:left;">'
+            f'{_fmt(v, decimals)} {_escape(unit)}</td>'
+            '</tr>')
     title = _escape(spec["title"])
     insight = _escape(spec.get("insight") or "")
     insight_html = (f'<div style="font-size:12px;color:#5b6b7b;margin:2px 0 10px;">'
                     f'{insight}</div>' if insight else "")
-    return ('<div style="margin:0 0 22px;">'
+    # dir="rtl": Hebrew-audience chart — labels on the right, bars grow
+    # right-to-left, LTR value column on the far left. Clients that ignore
+    # dir simply render the same table left-to-right.
+    return ('<div dir="rtl" style="margin:0 0 24px;text-align:right;">'
             f'<div style="font-size:15px;font-weight:bold;color:#12202e;'
             f'margin-bottom:2px;">{title}</div>{insight_html}'
-            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-            f'style="background:{_BAR_TRACK};border-radius:8px;">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
             f'{"".join(bars)}</table></div>')
 
 

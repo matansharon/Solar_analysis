@@ -69,7 +69,33 @@ def test_render_charts_uses_grounded_python_values():
     assert "Specific yield today" in html
     assert "Alpha leads Beta." in html      # insight caption
     assert "Alpha" in html and "Beta" in html
-    assert "1.5" in html and "0.75" in html  # 150/100 and 75/100, computed by Python
+    assert "1.50" in html and "0.75" in html  # 150/100 and 75/100, computed by Python
+
+
+def test_render_charts_sorts_bars_descending():
+    plants = [_plant("Low", 100.0, 50.0), _plant("High", 100.0, 150.0)]
+    html = render_charts([{"metric": "energy_today", "title": "E", "insight": ""}],
+                         plants)
+    assert html.index("High") < html.index("Low")   # leader first
+
+
+def test_render_charts_uniform_decimals_per_chart():
+    # Within one chart every value gets the same precision (98.1 next to 150.0,
+    # not 98.1 next to 150).
+    plants = [_plant("A", 100.0, 150.0), _plant("B", 100.0, 98.1)]
+    html = render_charts([{"metric": "energy_today", "title": "E", "insight": ""}],
+                         plants)
+    assert "150.0" in html and "98.1" in html
+
+
+def test_render_charts_rtl_layout_with_ltr_values():
+    # Hebrew-audience charts read right-to-left; the numeric value cells must
+    # stay LTR so "2.21 kWh/kWp" doesn't bidi-scramble.
+    plants = [_plant("A", 100.0, 150.0)]
+    html = render_charts([{"metric": "energy_today", "title": "E", "insight": ""}],
+                         plants)
+    assert 'dir="rtl"' in html
+    assert 'dir="ltr"' in html
 
 
 def test_render_charts_is_email_safe():
