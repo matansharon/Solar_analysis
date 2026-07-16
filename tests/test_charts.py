@@ -81,6 +81,16 @@ def test_render_charts_is_email_safe():
     assert "<table" in html                    # table-based bars
 
 
+def test_render_charts_label_cells_can_wrap():
+    # Long Hebrew plant names must be able to wrap on narrow (mobile) screens;
+    # a nowrap label column forces the whole email wider than the viewport.
+    plants = [_plant("קיבוץ ברעם - מוסך וסככת טרקטורים", 100.0, 150.0)]
+    html = render_charts([{"metric": "energy_today", "title": "E", "insight": ""}],
+                         plants)
+    label_cell = html.split("<td", 2)[1]      # first td = the plant-name cell
+    assert "white-space:nowrap" not in label_cell
+
+
 def test_render_charts_skips_metric_with_no_data():
     # No plant has co2 data -> that chart is omitted, not rendered empty.
     plants = [_plant("Alpha", 100.0, 150.0)]

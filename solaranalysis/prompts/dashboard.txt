@@ -8,6 +8,7 @@ Hard requirements (this is emailed — it must survive Gmail and Outlook):
 - Return a complete, self-contained HTML document (<!doctype html> … </html>).
 - Inline styles only (style="…" on elements). No <style> blocks, no CSS classes, no CSS variables (var(...)), no @media, no external stylesheets or fonts.
 - Layout with tables (role="presentation"), not flexbox/grid.
+- FLUID width: the outer container table must use width="640" together with style="width:100%;max-width:640px;" — NEVER a fixed pixel width (fixed widths overflow phone screens and force horizontal scrolling). Every nested table/element must fit 100% of its parent's width.
 - Web-safe fonts only (Segoe UI, Arial, Helvetica, sans-serif).
 - No JavaScript, no <svg>, no <canvas>, no external images or CDN links.
 - Light theme. A tasteful accent (amber ~#f5b301) is welcome. Give the summary and the charts clear, well-separated sections with a title/header.

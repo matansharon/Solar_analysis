@@ -104,8 +104,8 @@ def _one_chart(spec: dict, plants: list[PlantData]) -> str:
         pct = max(2, round(v / maxv * 85))   # cap at 85% so the value label fits
         bars.append(
             '<tr>'
-            f'<td style="padding:4px 8px 4px 0;font-size:13px;color:#1a2330;'
-            f'white-space:nowrap;">{_escape(name)}</td>'
+            f'<td style="padding:4px 8px 4px 0;font-size:13px;color:#1a2330;">'
+            f'{_escape(name)}</td>'
             '<td style="padding:4px 0;width:99%;">'
             '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
             f'<td width="{pct}%" style="background:{_BAR_COLOR};height:16px;'
