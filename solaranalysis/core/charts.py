@@ -105,7 +105,7 @@ def _one_chart(spec: dict, plants: list[PlantData]) -> str:
         pct = max(2, round(v / maxv * 100))
         bars.append(
             '<tr>'
-            f'<td style="padding:5px 0;font-size:13px;color:#1a2330;">'
+            f'<td width="130" style="padding:5px 0;font-size:13px;color:#1a2330;">'
             f'{_escape(name)}</td>'
             '<td style="padding:5px 10px;width:99%;">'
             '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '

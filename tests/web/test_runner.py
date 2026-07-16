@@ -12,7 +12,7 @@ def _stub_llm_calls(monkeypatch):
                         lambda report_md: "**סיכום בדיקה**", raising=False)
     monkeypatch.setattr(runner, "design_charts", lambda data_summary: [], raising=False)
     monkeypatch.setattr(runner, "compose_dashboard",
-                        lambda summary_md, charts_html:
+                        lambda summary_md, charts_html, **kw:
                         '<html><body style="margin:0">dash</body></html>',
                         raising=False)
 
@@ -305,7 +305,7 @@ def test_run_job_writes_and_emails_dashboard(tmp_path, monkeypatch, capsys):
                         lambda data_summary: [{"metric": "energy_today",
                                                "title": "E", "insight": "i"}])
     monkeypatch.setattr(runner, "compose_dashboard",
-                        lambda summary_md, charts_html:
+                        lambda summary_md, charts_html, **kw:
                         '<html><body style="margin:0">DASH-MARKER</body></html>')
     sent = []
     monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)

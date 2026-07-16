@@ -13,7 +13,7 @@ def _stub_llm_calls(monkeypatch):
                         lambda report_md: "**סיכום בדיקה**", raising=False)
     monkeypatch.setattr(cli, "design_charts", lambda data_summary: [], raising=False)
     monkeypatch.setattr(cli, "compose_dashboard",
-                        lambda summary_md, charts_html: "<html>dash</html>",
+                        lambda summary_md, charts_html, **kw: "<html>dash</html>",
                         raising=False)
 
 
@@ -84,7 +84,7 @@ def test_cli_writes_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_pipeline",
                         lambda cfg, tr, ss, **kw: _fake_pipeline_result([]))
     monkeypatch.setattr(cli, "compose_dashboard",
-                        lambda summary_md, charts_html: "<html>DASH-MARKER</html>")
+                        lambda summary_md, charts_html, **kw: "<html>DASH-MARKER</html>")
     out = tmp_path / "out"
     rc = cli.main(["--config", "x", "--out", str(out),
                    "--cache-dir", str(tmp_path / "c"), "--no-persist"])

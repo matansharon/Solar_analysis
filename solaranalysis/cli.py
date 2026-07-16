@@ -83,7 +83,9 @@ def main(argv=None):
             specs = design_charts(build_data_block(res["plants"], time_range,
                                                    default_meta(res["plants"])))
             charts_html = render_charts(specs, res["plants"])
-            dashboard = compose_dashboard(summary_md, charts_html)
+            dashboard = compose_dashboard(
+                summary_md, charts_html,
+                date_str=datetime.now().strftime("%d.%m.%Y"))
             dpath = write_dashboard(dashboard, out_dir)
             print(f"Dashboard written: {dpath}", file=sys.stderr)
         except Exception as e:

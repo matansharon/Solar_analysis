@@ -119,7 +119,9 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                 specs = design_charts(build_data_block(
                     res["plants"], time_range, default_meta(res["plants"])))
                 charts_html = render_charts(specs, res["plants"])
-                dashboard_html = compose_dashboard(summary_md, charts_html)
+                dashboard_html = compose_dashboard(
+                    summary_md, charts_html,
+                    date_str=datetime.now().strftime("%d.%m.%Y"))
                 write_dashboard(dashboard_html, out_dir)
                 events.emit_event({"event": "dashboard_written",
                                    "path": f"output/{stamp}/dashboard.html",

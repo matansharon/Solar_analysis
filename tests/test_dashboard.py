@@ -52,6 +52,37 @@ def test_compose_dashboard_falls_back_when_llm_raises():
     assert "<strong>S</strong>" in out
 
 
+def test_compose_dashboard_substitutes_date_token():
+    shell = "<html><body>{{DATE}}<main>{{SUMMARY}}</main>{{CHARTS}}</body></html>"
+    out = compose_dashboard("**S**", "<b>c</b>", client=_ShellClient(shell),
+                            date_str="16.07.2026")
+    assert "16.07.2026" in out
+    assert "{{DATE}}" not in out
+
+
+def test_compose_dashboard_strips_unfilled_date_token():
+    shell = "<html><body>{{DATE}}<main>{{SUMMARY}}</main>{{CHARTS}}</body></html>"
+    out = compose_dashboard("**S**", "<b>c</b>", client=_ShellClient(shell))
+    assert "{{DATE}}" not in out
+
+
+def test_compose_dashboard_injects_hidden_preheader():
+    # The summary's first line becomes the inbox preview snippet — hidden
+    # right after <body> so Gmail/Outlook show it in the message list.
+    out = compose_dashboard("**המתקן המוביל** הפיק 104 kWh/kWp.\n\nעוד טקסט.",
+                            "<b>c</b>", client=_ShellClient(_SHELL))
+    assert "display:none" in out
+    pre = out[:out.index("<main>")]
+    assert "המתקן המוביל הפיק" in pre
+
+
+def test_compose_dashboard_fallback_has_date_and_preheader():
+    out = compose_dashboard("**ראשון** ואז שני.", "<b>c</b>",
+                            client=_BoomClient(), date_str="16.07.2026")
+    assert "16.07.2026" in out
+    assert "display:none" in out
+
+
 def test_compose_dashboard_request_shape():
     c = _ShellClient(_SHELL)
     compose_dashboard("**S**", "<i>c</i>", client=c)

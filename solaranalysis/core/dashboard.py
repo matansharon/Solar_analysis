@@ -1,4 +1,6 @@
 from __future__ import annotations
+import re
+from html import escape as _escape
 from pathlib import Path
 
 import markdown as md
@@ -7,6 +9,8 @@ from . import report
 
 _DASHBOARD_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "dashboard.txt"
 _TITLE = "Solar Fleet Analysis"
+_BODY_TAG_RE = re.compile(r"<body[^>]*>", re.IGNORECASE)
+_MD_NOISE_RE = re.compile(r"[*_`#‎‏]")
 
 _FALLBACK_TEMPLATE = """<!doctype html>
 <html><head><meta charset="utf-8">
@@ -17,6 +21,7 @@ _FALLBACK_TEMPLATE = """<!doctype html>
 <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:10px;">
 <tr><td style="padding:32px 30px;">
 <h1 style="margin:0 0 4px;font-size:24px;color:#12202e;">{title}</h1>
+<div style="color:#5b6b7b;font-size:13px;">{date}</div>
 <div style="border-bottom:2px solid #f5b301;margin:14px 0 24px;font-size:0;line-height:0;">&nbsp;</div>
 {summary}
 <div style="margin:28px 0 14px;font-size:13px;font-weight:bold;letter-spacing:.04em;text-transform:uppercase;color:#a86500;">Fleet comparison</div>
@@ -39,18 +44,43 @@ def _summary_html(summary_md: str) -> str:
     return f'<div dir="rtl" style="text-align:right;">{body}</div>'
 
 
-def _default_dashboard(summary_html: str, charts_html: str) -> str:
-    return _FALLBACK_TEMPLATE.format(title=_TITLE, summary=summary_html, charts=charts_html)
+def _default_dashboard(summary_html: str, charts_html: str, date_str: str) -> str:
+    return _FALLBACK_TEMPLATE.format(title=_TITLE, date=date_str,
+                                     summary=summary_html, charts=charts_html)
 
 
-def compose_dashboard(summary_md: str, charts_html: str, client=None) -> str:
+def _preheader(summary_md: str, limit: int = 140) -> str:
+    """First non-empty summary line, stripped of markdown/bidi marks — the
+    inbox preview snippet."""
+    for line in summary_md.splitlines():
+        text = _MD_NOISE_RE.sub("", line).strip()
+        if text:
+            return text[:limit]
+    return ""
+
+
+def _inject_preheader(html_doc: str, preheader: str) -> str:
+    if not preheader:
+        return html_doc
+    div = ('<div style="display:none;max-height:0;overflow:hidden;'
+           f'mso-hide:all;">{_escape(preheader)}</div>')
+    m = _BODY_TAG_RE.search(html_doc)
+    if m:
+        return html_doc[:m.end()] + div + html_doc[m.end():]
+    return html_doc
+
+
+def compose_dashboard(summary_md: str, charts_html: str, client=None,
+                      date_str: str | None = None) -> str:
     """Wrapper variant A ("grounded"): Claude Opus 4.8 at xhigh reasoning designs
-    an email-safe HTML *shell* carrying the literal tokens {{SUMMARY}} and
-    {{CHARTS}}; Python substitutes the grounded Hebrew summary and chart
-    fragments into it — so the model owns the design but never the content or
-    numbers. Falls back to a deterministic email-safe template if the model
-    errors or omits a token, so a shell failure never loses the dashboard.
-    `client` is injectable for tests."""
+    an email-safe HTML *shell* carrying the literal tokens {{SUMMARY}},
+    {{CHARTS}} and {{DATE}}; Python substitutes the grounded Hebrew summary,
+    chart fragments and report date into it — so the model owns the design but
+    never the content or numbers. A hidden preheader (the summary's first line)
+    is injected after <body> for the inbox preview. Falls back to a
+    deterministic email-safe template if the model errors or omits a required
+    token, so a shell failure never loses the dashboard. `client` is injectable
+    for tests."""
     summary_html = _summary_html(summary_md)
     shell = None
     try:
@@ -66,14 +96,18 @@ def compose_dashboard(summary_md: str, charts_html: str, client=None) -> str:
                      "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content":
                        "Design the dashboard shell now. The Hebrew executive summary "
-                       "(already RTL and inline-styled) will replace {{SUMMARY}}, and "
-                       "the chart fragments will replace {{CHARTS}}. Return only the HTML."}],
+                       "(already RTL and inline-styled) will replace {{SUMMARY}}, the "
+                       "chart fragments will replace {{CHARTS}}, and the report date "
+                       "will replace {{DATE}}. Return only the HTML."}],
         )
         shell = "".join(b.text for b in msg.content
                         if getattr(b, "type", None) == "text")
     except Exception:
         shell = None
     if shell and "{{SUMMARY}}" in shell and "{{CHARTS}}" in shell:
-        return (shell.replace("{{SUMMARY}}", summary_html)
-                     .replace("{{CHARTS}}", charts_html))
-    return _default_dashboard(summary_html, charts_html)
+        html_doc = (shell.replace("{{SUMMARY}}", summary_html)
+                         .replace("{{CHARTS}}", charts_html))
+    else:
+        html_doc = _default_dashboard(summary_html, charts_html, date_str or "")
+    html_doc = html_doc.replace("{{DATE}}", date_str or "")
+    return _inject_preheader(html_doc, _preheader(summary_md))
