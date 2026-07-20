@@ -44,6 +44,14 @@ def _summary_html(summary_md: str) -> str:
     return f'<div dir="rtl" style="text-align:right;">{body}</div>'
 
 
+def _status_html(status_md: str) -> str:
+    """Render the Hebrew status-overview markdown to an email-safe, RTL,
+    inline-styled fragment (reuses report.py's email inliner)."""
+    body = report._inline_email_styles(
+        md.markdown(status_md, extensions=["tables", "fenced_code", "md_in_html"]))
+    return f'<div dir="rtl" style="text-align:right;">{body}</div>'
+
+
 def _default_dashboard(summary_html: str, charts_html: str, date_str: str) -> str:
     return _FALLBACK_TEMPLATE.format(title=_TITLE, date=date_str,
                                      summary=summary_html, charts=charts_html)
@@ -71,7 +79,8 @@ def _inject_preheader(html_doc: str, preheader: str) -> str:
 
 
 def compose_dashboard(summary_md: str, charts_html: str, client=None,
-                      date_str: str | None = None) -> str:
+                      date_str: str | None = None,
+                      status_md: str | None = None) -> str:
     """Wrapper variant A ("grounded"): Claude Opus 4.8 at xhigh reasoning designs
     an email-safe HTML *shell* carrying the literal tokens {{SUMMARY}},
     {{CHARTS}} and {{DATE}}; Python substitutes the grounded Hebrew summary,
@@ -81,7 +90,8 @@ def compose_dashboard(summary_md: str, charts_html: str, client=None,
     deterministic email-safe template if the model errors or omits a required
     token, so a shell failure never loses the dashboard. `client` is injectable
     for tests."""
-    summary_html = _summary_html(summary_md)
+    summary_html = ((_status_html(status_md) if status_md else "")
+                    + _summary_html(summary_md))
     shell = None
     try:
         if client is None:
@@ -110,4 +120,4 @@ def compose_dashboard(summary_md: str, charts_html: str, client=None,
     else:
         html_doc = _default_dashboard(summary_html, charts_html, date_str or "")
     html_doc = html_doc.replace("{{DATE}}", date_str or "")
-    return _inject_preheader(html_doc, _preheader(summary_md))
+    return _inject_preheader(html_doc, _preheader(status_md or summary_md))

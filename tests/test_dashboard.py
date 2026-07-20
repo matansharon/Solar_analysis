@@ -97,3 +97,28 @@ def test_compose_dashboard_fallback_is_email_safe():
     assert "<script" not in out and "<svg" not in out
     assert "var(" not in out
     assert "<!doctype html" in out.lower()            # self-contained document
+
+
+def test_compose_dashboard_renders_status_above_summary():
+    out = compose_dashboard("**סיכום מנהלים**", "<table>BARCHART</table>",
+                            client=_ShellClient(_SHELL),
+                            status_md="- ✅ **א'** — תקין")
+    assert "תקין" in out                       # status content present
+    # Status HTML comes before the summary HTML inside the body.
+    assert out.index("תקין") < out.index("סיכום מנהלים")
+
+
+def test_compose_dashboard_without_status_is_unchanged():
+    out = compose_dashboard("**סיכום מנהלים**", "<table>BARCHART</table>",
+                            client=_ShellClient(_SHELL))
+    assert "סיכום מנהלים" in out and "BARCHART" in out
+    # No status list marker leaks in when status_md is omitted.
+    assert "✅" not in out
+
+
+def test_compose_dashboard_preheader_prefers_status():
+    out = compose_dashboard("**סיכום** ראשון.", "<b>c</b>",
+                            client=_ShellClient(_SHELL),
+                            status_md="סטטוס כללי: 2 מערכות תקינות\n\n- ✅ **א'** — תקין")
+    pre = out[:out.index("<main>")]
+    assert "סטטוס כללי: 2 מערכות תקינות" in pre   # status headline is the inbox preview
