@@ -105,14 +105,27 @@ narrative, so figures cannot be hallucinated. A post-generation `verify_numbers`
 check flags any figure in the narrative not traceable to the data block
 (rounded/derived deltas may legitimately appear).
 
-**Executive summary (Hebrew):** After the report is generated, a second Claude
+**System status overview (Hebrew):** Above everything else, a second Opus 4.8
+call (also at "xhigh" reasoning) reads the finished report and judges each
+system's health from the facts already in it — device statuses, alert
+severities, production figures, data-quality flags — and writes a short Hebrew
+overview under the heading "סטטוס מערכות": a one-line fleet headline plus a
+per-system traffic light: ✅ תקין (working correctly), ⚠️ דורשת תשומת לב (needs
+attention), or ❌ תקלה (problem). A system that could not be fetched is always
+shown as ❌. It is prepended above the executive summary in both the on-disk
+`report.html` and the emailed dashboard (its headline also becomes the emailed
+report's inbox preview text). Like the executive summary, if this call fails
+it is skipped non-fatally — the run still delivers the report without it.
+
+**Executive summary (Hebrew):** After the report is generated, a Claude
 call (**Opus 4.8** at "xhigh" reasoning — `effort: xhigh` + adaptive thinking)
 distills it into a concise Hebrew executive summary ("סיכום מנהלים"), prepended
-to the top of the report. It appears in both the on-disk `report.html` and the
-emailed body, for both the CLI and the web app, and it summarizes only what the
-report already states (no new figures). `verify_numbers` still runs on the
-detailed report only. If the summary call fails it is skipped non-fatally — the
-run still delivers the detailed report, with a note.
+to the top of the report (below the system status overview, above the detailed
+analysis). It appears in both the on-disk `report.html` and the emailed body,
+for both the CLI and the web app, and it summarizes only what the report
+already states (no new figures). `verify_numbers` still runs on the detailed
+report only. If the summary call fails it is skipped non-fatally — the run
+still delivers the detailed report, with a note.
 
 ## Data coverage notes
 
