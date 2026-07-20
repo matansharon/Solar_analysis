@@ -123,3 +123,13 @@ def prepend_summary(report_md: str, summary_md: str) -> str:
             '## סיכום מנהלים\n\n'
             f'{summary_md}\n\n'
             '</div>\n\n---\n\n' + report_md)
+
+def prepend_status(report_md: str, status_md: str) -> str:
+    """Put a Hebrew system-status overview ("סטטוס מערכות") at the very top of
+    the report, in a right-to-left block, above the executive summary and the
+    detailed analysis. Mirrors prepend_summary; the `markdown="1"` div + blank
+    line lets the md_in_html extension render the inner markdown."""
+    return ('<div dir="rtl" markdown="1">\n\n'
+            '## סטטוס מערכות\n\n'
+            f'{status_md}\n\n'
+            '</div>\n\n---\n\n' + report_md)

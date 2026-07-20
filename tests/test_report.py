@@ -84,3 +84,29 @@ def test_render_email_html_renders_rtl_summary():
     html = render_email_html(doc, "T", "S")
     assert 'dir="rtl"' in html
     assert "טקסט בעברית" in html
+
+
+from solaranalysis.core.report import prepend_status
+
+
+def test_prepend_status_places_status_first_rtl():
+    out = prepend_status("## סיכום מנהלים\n\nהכל תקין.\n\n---\n\nMain body.",
+                         "סטטוס כללי: מערכת אחת — תקינה\n\n- ✅ **א'** — תקין")
+    assert 'dir="rtl"' in out
+    assert "סטטוס מערכות" in out
+    # Status precedes both the executive summary and the detailed report body.
+    assert out.index("סטטוס מערכות") < out.index("סיכום מנהלים")
+    assert out.index("סטטוס כללי") < out.index("Main body")
+
+
+def test_render_html_renders_status_summary_report_in_order():
+    doc = prepend_status(
+        prepend_summary("## Production & Performance\n\nMain body.",
+                        "**סיכום:** תקין."),
+        "- ✅ **א'** — תקין")
+    html = render_html(doc, "T", "S")
+    # Both RTL headings render (md_in_html active) and order is preserved.
+    assert 'dir="rtl"' in html
+    assert "<h2" in html and "סטטוס מערכות" in html
+    assert "<li>✅ <strong>א'</strong> — תקין</li>" in html
+    assert html.index("סטטוס מערכות") < html.index("סיכום מנהלים") < html.index("Main body")
