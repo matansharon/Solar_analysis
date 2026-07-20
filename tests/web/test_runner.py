@@ -10,6 +10,8 @@ def _stub_llm_calls(monkeypatch):
     # pure Python and stays real).
     monkeypatch.setattr(runner, "summarize_executive",
                         lambda report_md: "**סיכום בדיקה**", raising=False)
+    monkeypatch.setattr(runner, "status_overview",
+                        lambda report_md: "- ✅ **Good** — תקין", raising=False)
     monkeypatch.setattr(runner, "design_charts", lambda data_summary: [], raising=False)
     monkeypatch.setattr(runner, "compose_dashboard",
                         lambda summary_md, charts_html, **kw:
@@ -344,3 +346,50 @@ def test_run_job_dashboard_failure_falls_back_to_report_email(tmp_path, monkeypa
                if "report_emailed" in l][0]
     assert emailed["body"] == "report"            # fell back to detailed report
     assert len(sent) == 1
+
+
+def test_run_job_notes_status_overview(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    events = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+              if l.startswith("@@EVENT@@ ")]
+    notes = [e.get("reason", "") for e in events if e["event"] == "note"]
+    assert any("status overview" in r for r in notes)
+    complete = [e for e in events if e["event"] == "run_complete"][0]
+    assert complete["status"] == "success"
+
+
+def test_run_job_status_failure_is_non_fatal(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+
+    def boom(report_md):
+        raise RuntimeError("opus down")
+    monkeypatch.setattr(runner, "status_overview", boom)
+
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    complete = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+                if "run_complete" in l][0]
+    assert complete["status"] == "success"
+    assert "status overview skipped" in out
+
+
+def test_run_job_passes_status_to_dashboard(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    monkeypatch.setattr(runner, "design_charts",
+                        lambda data_summary: [{"metric": "energy_today",
+                                               "title": "E", "insight": "i"}])
+    seen = {}
+    monkeypatch.setattr(runner, "compose_dashboard",
+                        lambda summary_md, charts_html, **kw:
+                        (seen.update(kw), "<html><body>D</body></html>")[1])
+    runner.run_analysis_job(paths, run_id=1)
+    assert seen.get("status_md") == "- ✅ **Good** — תקין"

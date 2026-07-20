@@ -11,8 +11,10 @@ from ..core import measurements
 from ..core.schema import TimeRange
 from ..core.session_store import SessionStore
 from ..core.report import (render_html, render_email_html, write_report,
-                           write_dashboard, append_unavailable_section, prepend_summary)
-from ..core.analyze import summarize_executive, build_data_block, default_meta
+                           write_dashboard, append_unavailable_section,
+                           prepend_summary, prepend_status)
+from ..core.analyze import (summarize_executive, status_overview,
+                            build_data_block, default_meta)
 from ..core.charts import design_charts, render_charts
 from ..core.dashboard import compose_dashboard
 from ..adapters.base import get_adapter
@@ -92,7 +94,9 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         skipped = [{"name": s["name"], "reason": red.redact(str(s["reason"]))}
                    for s in res["skipped_plants"]]
         report_md = append_unavailable_section(res["report_md"], skipped)
+        base_md = report_md   # report + "Unavailable Plants" — the status input
         summary_md = None
+        status_md = None
         if res["plants"]:
             try:
                 summary_md = summarize_executive(res["report_md"])
@@ -102,6 +106,14 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
             except Exception as e:
                 events.emit_event({"event": "note",
                                    "reason": red.redact(f"executive summary skipped: {e}")})
+            try:
+                status_md = status_overview(base_md)
+                report_md = prepend_status(report_md, status_md)
+                events.emit_event({"event": "note",
+                                   "reason": "System status overview added"})
+            except Exception as e:
+                events.emit_event({"event": "note",
+                                   "reason": red.redact(f"status overview skipped: {e}")})
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         subtitle = f"{len(res['plants'])} plants · range {run['time_range']} · {stamp} UTC"
         html = render_html(report_md, "Solar Fleet Analysis", subtitle)
@@ -120,7 +132,7 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                     res["plants"], time_range, default_meta(res["plants"])))
                 charts_html = render_charts(specs, res["plants"])
                 dashboard_html = compose_dashboard(
-                    summary_md, charts_html,
+                    summary_md, charts_html, status_md=status_md,
                     date_str=datetime.now().strftime("%d.%m.%Y"))
                 write_dashboard(dashboard_html, out_dir)
                 events.emit_event({"event": "dashboard_written",
