@@ -170,3 +170,34 @@ def test_summarize_executive_request_shape():
     assert report_md in kw["messages"][0]["content"]
     # Sampling params 400 on Opus 4.8 — they must not be sent.
     assert "temperature" not in kw and "top_p" not in kw and "top_k" not in kw
+
+
+from solaranalysis.core.analyze import status_overview
+
+
+def test_status_overview_uses_injected_client():
+    out = status_overview("## Health & Faults\nPlant A: inverter fault.",
+                          client=_HebrewClient())
+    assert out == "**סיכום:** התחנה המובילה תקינה."
+
+
+def test_status_overview_reuses_list_break_normalization():
+    # A headline line immediately followed by bullets must be separated by a
+    # blank line, exactly like the executive summary (shared _ensure_list_breaks).
+    raw = "סטטוס כללי: 2 מערכות\n- ✅ א' — תקין\n- ❌ ב' — תקלה"
+    out = status_overview("report", client=_TextClient(raw))
+    assert "סטטוס כללי: 2 מערכות\n\n- ✅ א' — תקין" in out
+
+
+def test_status_overview_request_shape():
+    report_md = "## Health & Faults\nPlant A inverter offline."
+    client = _HebrewClient()
+    status_overview(report_md, client=client)
+    kw = client.kwargs
+    assert kw["model"] == "claude-opus-4-8"
+    assert kw["output_config"] == {"effort": "xhigh"}
+    assert kw["thinking"] == {"type": "adaptive"}
+    # The report being judged is handed to the model.
+    assert report_md in kw["messages"][0]["content"]
+    # Sampling params 400 on Opus 4.8 — they must not be sent.
+    assert "temperature" not in kw and "top_p" not in kw and "top_k" not in kw

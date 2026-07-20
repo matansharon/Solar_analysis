@@ -12,6 +12,8 @@ from ..config import AppConfig
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "system.txt"
 _EXEC_SUMMARY_PROMPT_PATH = (Path(__file__).resolve().parent.parent
                              / "prompts" / "exec_summary.txt")
+_STATUS_PROMPT_PATH = (Path(__file__).resolve().parent.parent
+                       / "prompts" / "status.txt")
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 def pick_model(cfg: AppConfig, time_range: TimeRange, plants=None) -> str:
@@ -127,6 +129,9 @@ def _system_prompt() -> str:
 def _exec_summary_prompt() -> str:
     return _EXEC_SUMMARY_PROMPT_PATH.read_text(encoding="utf-8")
 
+def _status_prompt() -> str:
+    return _STATUS_PROMPT_PATH.read_text(encoding="utf-8")
+
 # A non-bullet line directly followed by a bullet line. python-markdown only
 # recognizes a list when a blank line separates it from the paragraph above;
 # models routinely omit it, collapsing the bullets into one run-on <p>.
@@ -182,6 +187,31 @@ def summarize_executive(report_md: str, client=None) -> str:
         thinking={"type": "adaptive"},
         output_config={"effort": "xhigh"},
         system=[{"type": "text", "text": _exec_summary_prompt(),
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+    )
+    text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    return _ensure_list_breaks(text)
+
+def status_overview(report_md: str, client=None) -> str:
+    """Produce a brief Hebrew system-status overview ("סטטוס מערכות") of an
+    already-generated report, as markdown: a one-line fleet headline followed by
+    a traffic-light list (✅/⚠️/❌) — one line per system, with a short reason.
+    Claude judges each system's state from the facts in the report only.
+
+    Uses Claude Opus 4.8 at "xhigh" reasoning — effort="xhigh" plus adaptive
+    thinking (the fixed thinking.budget_tokens knob is rejected there). `client`
+    is injectable for tests, mirroring summarize_executive."""
+    if client is None:
+        import anthropic
+        client = anthropic.Anthropic()
+    user = report_md + "\n\nכתוב סקירת סטטוס מערכות תמציתית בעברית של הדוח שלמעלה."
+    msg = client.messages.create(
+        model="claude-opus-4-8",
+        max_tokens=16000,
+        thinking={"type": "adaptive"},
+        output_config={"effort": "xhigh"},
+        system=[{"type": "text", "text": _status_prompt(),
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
