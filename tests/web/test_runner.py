@@ -393,3 +393,38 @@ def test_run_job_passes_status_to_dashboard(tmp_path, monkeypatch, capsys):
                         (seen.update(kw), "<html><body>D</body></html>")[1])
     runner.run_analysis_job(paths, run_id=1)
     assert seen.get("status_md") == "- ✅ **Good** — תקין"
+
+
+def test_run_job_status_sees_appendix_summary_sees_clean(tmp_path, monkeypatch, capsys):
+    # Invariant: status_overview must receive base_md (report + "Unavailable
+    # Plants" appendix) so unfetched/skipped systems surface as a problem,
+    # while summarize_executive must receive the clean report (no appendix).
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+
+    from solaranalysis.core.schema import PlantData
+
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+        return {"report_md": "# R", "plants": [PlantData(
+                    plant_id="g", source_platform="growatt",
+                    source_plant_id="1", plant_name="Good")],
+                "verify_missing": [], "skipped_plants": [{"name": "Bad", "reason": "boom"}]}
+    monkeypatch.setattr(runner, "run_pipeline", fake_pipeline)
+
+    seen = {}
+
+    def fake_summarize(report_md):
+        seen["summary_input"] = report_md
+        return "**summary**"
+
+    def fake_status(report_md):
+        seen["status_input"] = report_md
+        return "- ✅ **Good**"
+
+    monkeypatch.setattr(runner, "summarize_executive", fake_summarize)
+    monkeypatch.setattr(runner, "status_overview", fake_status)
+
+    runner.run_analysis_job(paths, run_id=1)
+
+    assert "Unavailable Plants" in seen["status_input"]
+    assert "Unavailable Plants" not in seen["summary_input"]
