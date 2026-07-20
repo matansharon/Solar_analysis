@@ -6,8 +6,10 @@ from .config import load_config
 from .core.schema import TimeRange
 from .core.session_store import SessionStore
 from .core.report import (render_html, write_report, write_dashboard,
-                          append_unavailable_section, prepend_summary)
-from .core.analyze import summarize_executive, build_data_block, default_meta
+                          append_unavailable_section, prepend_summary,
+                          prepend_status)
+from .core.analyze import (summarize_executive, status_overview,
+                           build_data_block, default_meta)
 from .core.charts import design_charts, render_charts
 from .core.dashboard import compose_dashboard
 from .pipeline import run_pipeline
@@ -66,7 +68,9 @@ def main(argv=None):
         print(f"[warn] {n} plant(s) unavailable: {detail}", file=sys.stderr)
         report_md = append_unavailable_section(report_md, res["skipped_plants"])
 
+    base_md = report_md   # after append_unavailable_section (or plain res["report_md"])
     summary_md = None
+    status_md = None
     if res["plants"]:
         try:
             summary_md = summarize_executive(res["report_md"])
@@ -74,6 +78,12 @@ def main(argv=None):
             print("[note] Hebrew executive summary added", file=sys.stderr)
         except Exception as e:
             print(f"[warn] executive summary skipped: {e}", file=sys.stderr)
+        try:
+            status_md = status_overview(base_md)
+            report_md = prepend_status(report_md, status_md)
+            print("[note] System status overview added", file=sys.stderr)
+        except Exception as e:
+            print(f"[warn] status overview skipped: {e}", file=sys.stderr)
 
     html = render_html(report_md, title, subtitle)
     path = write_report(html, out_dir)
@@ -84,7 +94,7 @@ def main(argv=None):
                                                    default_meta(res["plants"])))
             charts_html = render_charts(specs, res["plants"])
             dashboard = compose_dashboard(
-                summary_md, charts_html,
+                summary_md, charts_html, status_md=status_md,
                 date_str=datetime.now().strftime("%d.%m.%Y"))
             dpath = write_dashboard(dashboard, out_dir)
             print(f"Dashboard written: {dpath}", file=sys.stderr)

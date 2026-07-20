@@ -11,6 +11,8 @@ def _stub_llm_calls(monkeypatch):
     # pure Python and stays real).
     monkeypatch.setattr(cli, "summarize_executive",
                         lambda report_md: "**סיכום בדיקה**", raising=False)
+    monkeypatch.setattr(cli, "status_overview",
+                        lambda report_md: "- ✅ **Good** — תקין", raising=False)
     monkeypatch.setattr(cli, "design_charts", lambda data_summary: [], raising=False)
     monkeypatch.setattr(cli, "compose_dashboard",
                         lambda summary_md, charts_html, **kw: "<html>dash</html>",
@@ -76,6 +78,24 @@ def test_cli_summary_failure_is_nonfatal(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "summarize_executive", boom)
     html = _run(tmp_path, monkeypatch, [])   # still returns 0 and writes report
     assert "סיכום מנהלים" not in html         # summary skipped, not fatal
+    assert "Report" in html
+
+
+def test_cli_prepends_system_status(tmp_path, monkeypatch):
+    html = _run(tmp_path, monkeypatch, [])
+    assert "סטטוס מערכות" in html                  # the status heading
+    assert "תקין" in html                           # the stubbed status body
+    # Status appears above the executive summary and the report body.
+    assert html.index("סטטוס מערכות") < html.index("סיכום מנהלים") < html.index("Report")
+
+
+def test_cli_status_failure_is_nonfatal(tmp_path, monkeypatch):
+    def boom(report_md):
+        raise RuntimeError("opus down")
+    monkeypatch.setattr(cli, "status_overview", boom)
+    html = _run(tmp_path, monkeypatch, [])   # still returns 0 and writes report
+    assert "סטטוס מערכות" not in html         # status skipped, not fatal
+    assert "סיכום מנהלים" in html             # summary still present
     assert "Report" in html
 
 
