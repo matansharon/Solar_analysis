@@ -191,8 +191,12 @@ tests/
 
 A local web app (FastAPI + React) wraps the same fetch/normalize/analyze/report
 pipeline behind a browser UI: manage plants, run/schedule comparisons, and
-review reports and run history without editing YAML. The file-based CLI above
-still works unchanged and does not require the web app.
+review reports and run history without editing YAML. A manual run can target
+**all enabled systems** (the default) or **a single system** chosen from the
+picker on the Runs page; a single-system run produces and emails a
+report/dashboard scoped to just that system and is labeled with its name in the
+run history. The file-based CLI above still works unchanged and does not require
+the web app.
 
 ### Install
 
