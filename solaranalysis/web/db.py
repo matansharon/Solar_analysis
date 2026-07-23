@@ -6,7 +6,7 @@ import sqlite3
 # tables automatically. Column additions to existing tables use a guarded
 # ALTER (see init_db) since CREATE TABLE IF NOT EXISTS can't add columns to
 # an existing table.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -113,6 +113,21 @@ CREATE TABLE IF NOT EXISTS power_points(
   updated_at_utc TEXT NOT NULL,
   PRIMARY KEY (plant_uid, timestamp_local)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS raw_payloads(
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER,                  -- NULL for CLI runs
+  config_plant_id INTEGER,
+  plant_uid TEXT NOT NULL,         -- PlantData.plant_id (e.g. 'solaredge-2387929')
+  platform TEXT NOT NULL,
+  endpoint_label TEXT NOT NULL,    -- short tag from the URL, e.g. 'sitesMeasurements'
+  url TEXT,
+  method TEXT,
+  status INTEGER,
+  fetched_at_utc TEXT NOT NULL,
+  payload_zjson BLOB NOT NULL      -- zlib-compressed UTF-8 JSON body
+);
+CREATE INDEX IF NOT EXISTS ix_raw_payloads_plant
+  ON raw_payloads(plant_uid, fetched_at_utc);
 """
 
 
