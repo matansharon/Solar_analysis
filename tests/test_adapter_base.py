@@ -2,7 +2,7 @@ import pytest
 from solaranalysis.config import AuthConfig
 from solaranalysis.core.session_store import SessionStore
 from solaranalysis.adapters.base import SolarPortalAdapter, get_adapter, AdapterError
-from solaranalysis.core.schema import PlantData, TimeRange
+from solaranalysis.core.schema import PlantData
 
 def test_cannot_instantiate_abc(tmp_path):
     with pytest.raises(TypeError):
@@ -73,6 +73,25 @@ def test_finish_raw_attaches_to_first_result_when_enabled():
     assert r0.raw_payloads[0].endpoint_label == "meas"
     assert r0.raw_payloads[0].body == {"a": 1}
     assert r1.raw_payloads == []  # attached to the first only
+
+
+def test_finish_raw_routes_per_site_for_multi_site_accounts():
+    a = _StubAdapter(None, None)
+    a.record_raw = True
+    bs = _FakeBS([
+        {"url": "https://monitoring.solaredge.com/services/sitelist/sitesMeasurements",
+         "method": "GET", "status": 200, "body": {"fleet": True}},
+        {"url": "https://monitoring.solaredge.com/services/dashboard/live-power/sites/2257529",
+         "method": "GET", "status": 200, "body": {"site": "2257529"}},
+        {"url": "https://monitoring.solaredge.com/services/dashboard/live-power/sites/2387929",
+         "method": "GET", "status": 200, "body": {"site": "2387929"}},
+    ])
+    r0 = PlantData("solaredge-2387929", "solaredge", "2387929", "S1")
+    r1 = PlantData("solaredge-2257529", "solaredge", "2257529", "S2")
+    a._finish_raw(bs, [r0, r1])
+    assert len(r0.raw_payloads) == 2  # fleet + 2387929
+    assert len(r1.raw_payloads) == 1  # 2257529
+    assert r1.raw_payloads[0].url.endswith("2257529")
 
 
 def test_finish_raw_noop_when_disabled_or_empty():

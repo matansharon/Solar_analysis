@@ -158,6 +158,9 @@ def map_solaredge_fleet(site: dict, meas: dict, env: dict | None,
     # ranged runs). energyYesterday is already kWh, like the other counters.
     ey = _num(meas.get("energyYesterday"))
     if ey is not None:
+        # yday uses server-local date.today() (not the site's own timezone)
+        # when `today` isn't passed in; fine at the intended ~06:00 daily-run
+        # cadence, where server-local and site-local "yesterday" agree.
         yday = ((today or date.today()) - timedelta(days=1)).isoformat()
         pd.energy_timeseries.append(EnergyPoint(yday, ey, "day"))
 

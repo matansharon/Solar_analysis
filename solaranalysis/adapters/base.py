@@ -42,16 +42,32 @@ class SolarPortalAdapter(ABC):
             bs.start_raw_capture()
 
     def _finish_raw(self, bs, results) -> None:
-        """Attach the session's recorded raw payloads to the first PlantData."""
+        """Route each recorded raw payload to the PlantData it belongs to.
+
+        A payload is attributed to a site when exactly one result's
+        source_plant_id appears in the URL as a bounded token (so one site id
+        can't partially match inside a longer number). Zero matches means an
+        account/fleet-level payload; multiple matches means an ambiguous URL
+        (e.g. a shared id prefix) — both fall back to results[0].
+        """
         if not self.record_raw or not results:
             return
+        import re
         from ..core.schema import RawPayload
         from ._browser import raw_label
-        results[0].raw_payloads = [
-            RawPayload(endpoint_label=raw_label(r.get("url", "")),
-                       url=r.get("url", ""), method=r.get("method", "GET"),
-                       status=r.get("status"), body=r.get("body"))
-            for r in bs.raw_records()]
+
+        for r in bs.raw_records():
+            url = r.get("url", "")
+            payload = RawPayload(endpoint_label=raw_label(url), url=url,
+                                  method=r.get("method", "GET"),
+                                  status=r.get("status"), body=r.get("body"))
+            matches = [
+                pd for pd in results
+                if pd.source_plant_id
+                and re.search(r"(?<![A-Za-z0-9])" + re.escape(pd.source_plant_id) + r"(?![A-Za-z0-9])", url)
+            ]
+            target = matches[0] if len(matches) == 1 else results[0]
+            target.raw_payloads.append(payload)
 
     @abstractmethod
     def login(self) -> None: ...
