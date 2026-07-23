@@ -123,3 +123,25 @@ def test_secret_redacted_in_log_and_stream(tmp_path):
     log = open(paths.data_dir + "/" + run["log_path"], encoding="utf-8").read()
     assert "sekret" not in log and "***" in log
     assert run["status"] == "failed"
+
+
+def test_start_run_persists_plant_id(tmp_path):
+    paths = _paths(tmp_path)
+    proc = FakeProc([_ev({"event": "run_complete", "status": "failed"})], code=1)
+    proc._done.set()
+    rm = run_manager.RunManager(paths, spawn=lambda cmd: proc)
+    rid = rm.start_run("manual", "30d", plant_id=3)
+    rm.join(rid, timeout=5)
+    conn = db.connect(paths.db_path)
+    assert repo.get_run(conn, rid)["plant_id"] == 3
+
+
+def test_start_run_default_plant_id_is_null(tmp_path):
+    paths = _paths(tmp_path)
+    proc = FakeProc([_ev({"event": "run_complete", "status": "failed"})], code=1)
+    proc._done.set()
+    rm = run_manager.RunManager(paths, spawn=lambda cmd: proc)
+    rid = rm.start_run("manual", "30d")
+    rm.join(rid, timeout=5)
+    conn = db.connect(paths.db_path)
+    assert repo.get_run(conn, rid)["plant_id"] is None

@@ -83,14 +83,15 @@ class RunManager:
                 out.append(auth.token)
         return out
 
-    def start_run(self, trigger: str, time_range: str) -> int:
+    def start_run(self, trigger: str, time_range: str, plant_id: int | None = None) -> int:
         with self._lock:
             if self._active:
                 raise Busy({"kind": self._active["kind"], "id": self._active["id"]})
             conn = db.connect(self.paths.db_path)
             log_rel = ""  # set after we know the id
             rid = repo.create_run(conn, trigger=trigger, time_range=time_range,
-                                  log_path="pending", started_at=_now())
+                                  log_path="pending", started_at=_now(),
+                                  plant_id=plant_id)
             log_rel = f"logs/run-{rid}.log"
             conn.execute("UPDATE runs SET log_path=? WHERE id=?", (log_rel, rid))
             conn.commit()
