@@ -36,7 +36,7 @@ export type RunStatus = "running" | "success" | "partial" | "failed" | "cancelle
 export interface Run {
   id: number; status: RunStatus; trigger: "manual" | "scheduled";
   time_range: TimeRange; started_at: string; finished_at: string | null;
-  report_path: string | null; log_path: string;
+  report_path: string | null; log_path: string; plant_id: number | null;
   plants_summary: { name: string; ok: boolean; reason?: string }[] | null;
   skipped_plants: { name: string; reason: string }[] | null;
   notes: Record<string, unknown> | null; error: string | null;
@@ -94,7 +94,8 @@ export const api = {
 
   runs: () => req<Run[]>("GET", "/api/runs"),
   run: (id: number) => req<Run>("GET", `/api/runs/${id}`),
-  startRun: (time_range: TimeRange) => req<{ id: number }>("POST", "/api/runs", { time_range }),
+  startRun: (time_range: TimeRange, plantId?: number | null) =>
+    req<{ id: number }>("POST", "/api/runs", { time_range, plant_id: plantId ?? null }),
   cancelRun: (id: number) => req<{ cancelled: boolean }>("POST", `/api/runs/${id}/cancel`),
   runLog: (id: number) => req<{ log: string }>("GET", `/api/runs/${id}/log`),
   reportUrl: (id: number) => `/api/runs/${id}/report`,

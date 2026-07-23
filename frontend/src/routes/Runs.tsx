@@ -38,11 +38,15 @@ export default function Runs() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: runs, isLoading, error } = useQuery({ queryKey: ["runs"], queryFn: api.runs });
+  const { data: plants } = useQuery({ queryKey: ["plants"], queryFn: api.plants });
+  const enabledPlants = (plants ?? []).filter((p) => p.enabled);
+  const nameById = new Map(enabledPlants.map((p) => [p.id, p.name] as const));
+  const [plantId, setPlantId] = useState<number | null>(null); // null = all enabled
   const [range, setRange] = useState<TimeRange>("snapshot");
   const [startError, setStartError] = useState<string | null>(null);
 
   const startRun = useMutation({
-    mutationFn: () => api.startRun(range),
+    mutationFn: () => api.startRun(range, plantId),
     onSuccess: (res) => {
       setStartError(null);
       void qc.invalidateQueries({ queryKey: ["runs"] });
@@ -62,6 +66,19 @@ export default function Runs() {
           <p>Analysis run history — trigger a manual run or inspect a past one.</p>
         </div>
         <div className="btn-row">
+          <select
+            className="field__select"
+            value={plantId ?? ""}
+            onChange={(e) => setPlantId(e.target.value === "" ? null : Number(e.target.value))}
+            aria-label="System for new run"
+          >
+            <option value="">All enabled systems</option>
+            {enabledPlants.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
           <select
             className="field__select"
             value={range}
@@ -110,6 +127,7 @@ export default function Runs() {
                   <th>Status</th>
                   <th>Trigger</th>
                   <th>Range</th>
+                  <th>System</th>
                   <th>Started</th>
                   <th>Duration</th>
                   <th />
@@ -117,7 +135,11 @@ export default function Runs() {
               </thead>
               <tbody>
                 {runs.map((r) => (
-                  <RunRow key={r.id} run={r} />
+                  <RunRow
+                    key={r.id}
+                    run={r}
+                    systemLabel={r.plant_id == null ? "All" : (nameById.get(r.plant_id) ?? `#${r.plant_id}`)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -128,7 +150,7 @@ export default function Runs() {
   );
 }
 
-function RunRow({ run }: { run: Run }) {
+function RunRow({ run, systemLabel }: { run: Run; systemLabel: string }) {
   return (
     <tr>
       <td className="mono">#{run.id}</td>
@@ -137,6 +159,7 @@ function RunRow({ run }: { run: Run }) {
       </td>
       <td className="cell-muted">{run.trigger}</td>
       <td className="cell-muted">{run.time_range}</td>
+      <td className="cell-muted">{systemLabel}</td>
       <td className="cell-timestamp">{formatTimestamp(run.started_at)}</td>
       <td className="cell-timestamp">{formatDuration(run.started_at, run.finished_at)}</td>
       <td>
