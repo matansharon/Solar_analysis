@@ -41,6 +41,14 @@ class PowerPoint:
     power_kw: float | None
 
 @dataclass
+class RawPayload:
+    endpoint_label: str
+    url: str
+    method: str
+    status: int | None
+    body: object  # JSON-serializable portal response (dict/list/scalar)
+
+@dataclass
 class Device:
     device_id: str
     device_type: str = "inverter"
@@ -105,6 +113,9 @@ class PlantData:
     fetched_at_utc: str | None = None  # when this run actually pulled the data
     config_plant_id: int | None = None  # web app's plants.id this fetch belongs to
     data_quality_flags: list[str] = field(default_factory=list)
+    # untouched portal responses for this fetch, persisted verbatim when the
+    # web runner enables raw capture; excluded from to_dict (never fed to the LLM).
+    raw_payloads: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         def convert(o):
@@ -115,4 +126,5 @@ class PlantData:
             if dataclasses.is_dataclass(o):
                 return {f.name: convert(getattr(o, f.name)) for f in dataclasses.fields(o)}
             return o
-        return convert(self)
+        return {f.name: convert(getattr(self, f.name))
+                for f in dataclasses.fields(self) if f.name != "raw_payloads"}
