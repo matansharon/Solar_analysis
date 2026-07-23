@@ -12,6 +12,7 @@ tests, which exercise the pure mappers) import cleanly without a browser.
 """
 from __future__ import annotations
 import os
+import re
 
 # A realistic desktop Chrome UA; headless-shell's default UA is occasionally
 # treated differently by bot heuristics, and this matched the live probe.
@@ -19,6 +20,16 @@ DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 )
+
+# Skip static assets when recording raw payloads (mirrors tools/discover.py).
+_RAW_SKIP = re.compile(
+    r"\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|ico|map)(\?|$)", re.I)
+
+
+def raw_label(url: str) -> str:
+    """Short tag for a captured endpoint: the last non-empty path segment."""
+    path = url.split("?", 1)[0].rstrip("/")
+    return path.rsplit("/", 1)[-1] or path
 
 
 def headless_default() -> bool:
@@ -49,6 +60,8 @@ class BrowserSession:
         self._browser = None
         self.context = None
         self.page = None
+        self._recording = False
+        self._raw: list = []
 
     def __enter__(self) -> "BrowserSession":
         from playwright.sync_api import sync_playwright
@@ -106,12 +119,44 @@ class BrowserSession:
         """Cookies/localStorage of the live context (for session caching)."""
         return self.context.storage_state()
 
+    def start_raw_capture(self) -> None:
+        """Begin recording every JSON response (and get/post_json result)."""
+        self._recording = True
+        self._raw = []
+
+        def on_raw(resp):
+            url = getattr(resp, "url", "") or ""
+            if _RAW_SKIP.search(url):
+                return
+            try:
+                body = resp.json()
+            except Exception:
+                return
+            req = getattr(resp, "request", None)
+            self._raw.append({"url": url,
+                              "method": getattr(req, "method", "GET"),
+                              "status": getattr(resp, "status", None),
+                              "body": body})
+
+        self.page.on("response", on_raw)
+
+    def raw_records(self) -> list:
+        return self._raw
+
     def get_json(self, url: str):
         """Authenticated GET within the browser session (shares cookies)."""
         r = self.context.request.get(url)
-        return r.json() if r.ok else None
+        body = r.json() if r.ok else None
+        if self._recording and body is not None:
+            self._raw.append({"url": url, "method": "GET",
+                              "status": getattr(r, "status", None), "body": body})
+        return body
 
     def post_json(self, url: str, **kwargs):
         """Authenticated POST within the browser session (shares cookies)."""
         r = self.context.request.post(url, **kwargs)
-        return r.json() if r.ok else None
+        body = r.json() if r.ok else None
+        if self._recording and body is not None:
+            self._raw.append({"url": url, "method": "POST",
+                              "status": getattr(r, "status", None), "body": body})
+        return body

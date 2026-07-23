@@ -62,6 +62,70 @@ def test_capture_ignores_unparseable_bodies():
 
 
 # ---------------------------------------------------------------------------
+# raw capture
+# ---------------------------------------------------------------------------
+
+import types as _types
+from solaranalysis.adapters._browser import raw_label
+
+
+class FakeReq:
+    def __init__(self, payload, ok=True, status=200):
+        self._p, self.ok, self.status = payload, ok, status
+    def get(self, url):
+        return self
+    def post(self, url, **kw):
+        return self
+    def json(self):
+        return self._p
+
+
+def test_raw_label_extracts_last_path_segment():
+    assert raw_label("https://h/services/sitelist/sitesMeasurements?x=1") == "sitesMeasurements"
+    assert raw_label("https://h/a/b/") == "b"
+
+
+def test_raw_capture_records_json_responses():
+    bs = _session_with_fake_page()
+    bs.start_raw_capture()
+    bs.page.handlers["response"](FakeResp("https://x/api/meas", [{"v": 1}]))
+    recs = bs.raw_records()
+    assert len(recs) == 1
+    assert recs[0]["url"] == "https://x/api/meas"
+    assert recs[0]["body"] == [{"v": 1}]
+
+
+def test_raw_capture_skips_static_assets():
+    bs = _session_with_fake_page()
+    bs.start_raw_capture()
+    bs.page.handlers["response"](FakeResp("https://x/app.js", {"x": 1}))
+    assert bs.raw_records() == []
+
+
+def test_raw_capture_ignores_unparseable_bodies():
+    bs = _session_with_fake_page()
+    bs.start_raw_capture()
+    bs.page.handlers["response"](FakeResp("https://x/api/meas", None, raises=True))
+    assert bs.raw_records() == []
+
+
+def test_raw_records_empty_before_start():
+    bs = _session_with_fake_page()
+    assert bs.raw_records() == []
+
+
+def test_get_json_records_when_capturing():
+    bs = _session_with_fake_page()
+    bs.context = _types.SimpleNamespace(request=FakeReq({"ok": 1}))
+    bs.start_raw_capture()
+    body = bs.get_json("https://x/api/y")
+    assert body == {"ok": 1}
+    recs = bs.raw_records()
+    assert recs[-1]["url"] == "https://x/api/y"
+    assert recs[-1]["method"] == "GET"
+
+
+# ---------------------------------------------------------------------------
 # __enter__ / storage_state — driven through a fake playwright module
 # ---------------------------------------------------------------------------
 
