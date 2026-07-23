@@ -23,11 +23,13 @@ from . import db, repo, crypto, events, mailer
 from .paths import Paths
 
 
-def build_app_config(conn, key):
+def build_app_config(conn, key, plant_id=None):
     settings = repo.get_app_settings(conn)
     plants, names = [], {}
     for p in repo.list_plants(conn):
         if not p["enabled"]:
+            continue
+        if plant_id is not None and p["id"] != plant_id:
             continue
         auth = repo.load_plant_auth(conn, key, p["id"])
         plants.append(PlantConfig(name=p["name"], auth=auth,
@@ -64,7 +66,8 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         key = crypto.load_or_create_key(paths.key_path)
         run = repo.get_run(conn, run_id)
         time_range = TimeRange(run["time_range"])
-        cfg, _ = build_app_config(conn, key)
+        plant_id = run.get("plant_id")
+        cfg, names = build_app_config(conn, key, plant_id=plant_id)
         red = events.Redactor(collect_secrets(cfg))
         ss = SessionStore(paths.session_cache_dir)
 
@@ -115,7 +118,11 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                 events.emit_event({"event": "note",
                                    "reason": red.redact(f"status overview skipped: {e}")})
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        subtitle = f"{len(res['plants'])} plants · range {run['time_range']} · {stamp} UTC"
+        if plant_id is not None:
+            scope_label = names.get(plant_id, f"system {plant_id}")
+        else:
+            scope_label = f"{len(res['plants'])} plants"
+        subtitle = f"{scope_label} · range {run['time_range']} · {stamp} UTC"
         html = render_html(report_md, "Solar Fleet Analysis", subtitle)
         out_dir = f"{paths.output_dir}/{stamp}"
         write_report(html, out_dir)
@@ -144,7 +151,7 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                                    "reason": red.redact(f"dashboard skipped: {e}")})
 
         status = "partial" if skipped else "success"
-        subject = (f"Solar Fleet Analysis · {status} · {len(res['plants'])} plants "
+        subject = (f"Solar Fleet Analysis · {status} · {scope_label} "
                    f"· range {run['time_range']} · {stamp} UTC")
         try:
             if mailer.is_configured() and mailer.recipients():

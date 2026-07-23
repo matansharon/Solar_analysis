@@ -127,6 +127,67 @@ def test_run_job_redacts_secret_in_events(tmp_path, monkeypatch, capsys):
     assert "***" in out
 
 
+def _seed_two(paths):
+    conn = db.connect(paths.db_path)
+    db.init_db(conn)
+    key = crypto.load_or_create_key(paths.key_path)
+    repo.create_plant(conn, key, {"name": "Alpha", "platform": "growatt",
+                                  "auth_mode": "password", "username": "u",
+                                  "password": "pw"})
+    repo.create_plant(conn, key, {"name": "Beta", "platform": "growatt",
+                                  "auth_mode": "password", "username": "u2",
+                                  "password": "pw2"})
+    return conn, key
+
+
+def test_build_app_config_filters_to_plant_id(tmp_path):
+    paths = _paths(tmp_path)
+    conn, key = _seed_two(paths)
+    target = next(p for p in repo.list_plants(conn) if p["name"] == "Beta")
+    cfg, names = runner.build_app_config(conn, key, plant_id=target["id"])
+    assert [p.name for p in cfg.plants] == ["Beta"]
+    assert names == {target["id"]: "Beta"}
+
+
+def test_build_app_config_none_is_all_enabled(tmp_path):
+    paths = _paths(tmp_path)
+    conn, key = _seed_two(paths)
+    cfg, _ = runner.build_app_config(conn, key)
+    assert {p.name for p in cfg.plants} == {"Alpha", "Beta"}
+
+
+def test_run_job_scopes_pipeline_to_target(tmp_path, monkeypatch, capsys):
+    paths = _paths(tmp_path)
+    conn, key = _seed_two(paths)
+    beta = next(p for p in repo.list_plants(conn) if p["name"] == "Beta")
+    repo.create_run(conn, trigger="manual", time_range="30d",
+                    log_path="logs/run-1.log", started_at="2026-07-23T00:00:00",
+                    plant_id=beta["id"])
+    conn.close()
+
+    seen = {}
+    from solaranalysis.core.schema import PlantData
+
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+        seen["plants"] = [p.name for p in cfg.plants]
+        return {"report_md": "# R", "plants": [PlantData(
+                    plant_id="b", source_platform="growatt",
+                    source_plant_id="1", plant_name="Beta")],
+                "verify_missing": [], "skipped_plants": []}
+    monkeypatch.setattr(runner, "run_pipeline", fake_pipeline)
+
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["me@x.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(subject))
+
+    runner.run_analysis_job(paths, run_id=1)
+    assert seen["plants"] == ["Beta"]              # pipeline saw only the target
+    assert "Beta" in sent[0]                       # subject names the system
+    assert "1 plants" not in sent[0]
+
+
 def test_test_job_reports_result(tmp_path, monkeypatch, capsys):
     paths = _paths(tmp_path)
     conn, key = _seed(paths)
