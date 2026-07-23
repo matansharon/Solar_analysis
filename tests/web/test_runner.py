@@ -70,7 +70,7 @@ def test_run_job_emits_events_and_writes_report(tmp_path, monkeypatch, capsys):
 
     # Stub the pipeline so no browser/network is touched; drive progress + result.
     from solaranalysis.core.schema import PlantData
-    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         progress({"event": "plant_start", "plant": "Good"})
         progress({"event": "plant_done", "plant": "Good", "ok": True})
         progress({"event": "analyze_start"})
@@ -98,7 +98,7 @@ def test_run_job_partial_when_skipped(tmp_path, monkeypatch, capsys):
     repo.create_run(conn, trigger="manual", time_range="30d",
                     log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
     conn.close()
-    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         return {"report_md": "# R", "plants": [], "verify_missing": [],
                 "skipped_plants": [{"name": "Good", "reason": "boom"}]}
     monkeypatch.setattr(runner, "run_pipeline", fake_pipeline)
@@ -115,7 +115,7 @@ def test_run_job_redacts_secret_in_events(tmp_path, monkeypatch, capsys):
     repo.create_run(conn, trigger="manual", time_range="30d",
                     log_path="logs/run-1.log", started_at="2026-07-04T00:00:00")
     conn.close()
-    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         progress({"event": "plant_done", "plant": "Good", "ok": False,
                   "reason": "auth failed for pw"})
         return {"report_md": "# R", "plants": [], "verify_missing": [],
@@ -168,7 +168,7 @@ def test_run_job_scopes_pipeline_to_target(tmp_path, monkeypatch, capsys):
     seen = {}
     from solaranalysis.core.schema import PlantData
 
-    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         seen["plants"] = [p.name for p in cfg.plants]
         return {"report_md": "# R", "plants": [PlantData(
                     plant_id="b", source_platform="growatt",
@@ -211,7 +211,7 @@ def _seed_run(paths):
     conn.close()
 
 
-def _success_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+def _success_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
     from solaranalysis.core.schema import PlantData
     return {"report_md": "# R", "plants": [PlantData(
                 plant_id="g", source_platform="growatt",
@@ -241,7 +241,7 @@ def test_run_job_emails_on_partial(tmp_path, monkeypatch, capsys):
     paths = _paths(tmp_path)
     _seed_run(paths)
 
-    def partial_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def partial_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         return {"report_md": "# R", "plants": [], "verify_missing": [],
                 "skipped_plants": [{"name": "Good", "reason": "boom"}]}
 
@@ -465,7 +465,7 @@ def test_run_job_status_sees_appendix_summary_sees_clean(tmp_path, monkeypatch, 
 
     from solaranalysis.core.schema import PlantData
 
-    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None):
+    def fake_pipeline(cfg, tr, ss, progress=None, on_fetched=None, record_raw=False):
         return {"report_md": "# R", "plants": [PlantData(
                     plant_id="g", source_platform="growatt",
                     source_plant_id="1", plant_name="Good")],

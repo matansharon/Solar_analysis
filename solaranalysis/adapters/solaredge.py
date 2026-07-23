@@ -296,6 +296,7 @@ class SolarEdgeAdapter(SolarPortalAdapter):
         self.login()
         state = self._load_session()
         with _browser.BrowserSession(storage_state=state) as bs:
+            self._begin_raw(bs)
             store = bs.capture([_SEARCH, _MEAS])
             self._authenticate(bs, had_state=bool(state))
 
@@ -342,6 +343,7 @@ class SolarEdgeAdapter(SolarPortalAdapter):
                 # best-effort via safe_step; never fails the site.
                 self._enrich_site(bs, pd, sid, time_range)
                 results.append(pd)
+            self._finish_raw(bs, results)
             return results
 
     # ---- per-site deep fetch -------------------------------------------

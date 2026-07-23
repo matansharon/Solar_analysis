@@ -418,6 +418,7 @@ class GrowattAdapter(SolarPortalAdapter):
     def _fetch_web(self, time_range: TimeRange) -> list[PlantData]:
         state = self._load_session()
         with _browser.BrowserSession(storage_state=state) as bs:
+            self._begin_raw(bs)
             store = bs.capture(["getPlantListTitle"])
             self._authenticate(bs, had_state=bool(state))
             bs.page.wait_for_timeout(4000)
@@ -451,6 +452,7 @@ class GrowattAdapter(SolarPortalAdapter):
                 # per-endpoint best-effort via safe_step — never fails the plant.
                 self._enrich_web(bs, pd, pid, time_range)
                 results.append(pd)
+            self._finish_raw(bs, results)
             return results
 
     # ---- password-mode deep fetch -------------------------------------

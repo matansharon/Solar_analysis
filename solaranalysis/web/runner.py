@@ -92,7 +92,7 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
                            "plants": [p.name for p in cfg.plants],
                            "time_range": run["time_range"]})
         res = run_pipeline(cfg, time_range, ss, progress=progress,
-                           on_fetched=persist)
+                           on_fetched=persist, record_raw=True)
 
         skipped = [{"name": s["name"], "reason": red.redact(str(s["reason"]))}
                    for s in res["skipped_plants"]]

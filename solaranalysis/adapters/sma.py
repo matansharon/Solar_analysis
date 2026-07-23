@@ -316,6 +316,7 @@ class SMAAdapter(SolarPortalAdapter):
         self.login()
         state = self._load_session()
         with _browser.BrowserSession(storage_state=state) as bs:
+            self._begin_raw(bs)
             self._authenticate(bs, had_state=bool(state))
 
             results = self._fetch_list(bs)
@@ -327,6 +328,7 @@ class SMAAdapter(SolarPortalAdapter):
                     # above is the guaranteed floor.
                     safe_step(pd, "sma: plant drilldown",
                               lambda pd=pd: self._drilldown(bs, pd, time_range))
+            self._finish_raw(bs, results)
             return results
 
     def _fetch_list(self, bs) -> list[PlantData]:

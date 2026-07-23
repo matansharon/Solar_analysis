@@ -19,7 +19,7 @@ def _normalize(pd: PlantData, pc: PlantConfig) -> PlantData:
 
 def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
                  adapter_factory=get_adapter, analyzer=run_analysis,
-                 progress=None, on_fetched=None) -> dict:
+                 progress=None, on_fetched=None, record_raw=False) -> dict:
     def emit(**ev):
         if progress:
             progress(ev)
@@ -29,6 +29,7 @@ def run_pipeline(cfg: AppConfig, time_range: TimeRange, session_store,
         emit(event="plant_start", plant=pc.name)
         try:
             adapter = adapter_factory(pc.auth, session_store)
+            adapter.record_raw = record_raw
             emit(event="plant_step", plant=pc.name, step="login")
             adapter.login()
             emit(event="plant_step", plant=pc.name, step="fetch")
