@@ -40,7 +40,7 @@ export default function Runs() {
   const { data: runs, isLoading, error } = useQuery({ queryKey: ["runs"], queryFn: api.runs });
   const { data: plants } = useQuery({ queryKey: ["plants"], queryFn: api.plants });
   const enabledPlants = (plants ?? []).filter((p) => p.enabled);
-  const nameById = new Map(enabledPlants.map((p) => [p.id, p.name] as const));
+  const nameById = new Map((plants ?? []).map((p) => [p.id, p.name] as const));
   const [plantId, setPlantId] = useState<number | null>(null); // null = all enabled
   const [range, setRange] = useState<TimeRange>("snapshot");
   const [startError, setStartError] = useState<string | null>(null);
