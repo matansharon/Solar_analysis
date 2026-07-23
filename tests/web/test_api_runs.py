@@ -12,8 +12,10 @@ class FakeRM:
     def __init__(self, busy=False):
         self.busy = busy
         self.cancelled = None
+        self.last_plant_id = None
         self._progress = {"plants": {"A": "running"}, "status": "running"}
-    def start_run(self, trigger, time_range):
+    def start_run(self, trigger, time_range, plant_id=None):
+        self.last_plant_id = plant_id
         if self.busy:
             raise Busy({"kind": "run", "id": 1})
         return 5
@@ -34,10 +36,58 @@ def _client(tmp_path, rm):
     return client, paths
 
 
+def _seed_plant(paths, *, enabled=True):
+    from solaranalysis.web import crypto
+    conn = db.connect(paths.db_path)
+    key = crypto.load_or_create_key(paths.key_path)
+    pid = repo.create_plant(conn, key, {"name": "Sys", "platform": "growatt",
+                                        "auth_mode": "password", "username": "u",
+                                        "password": "pw", "enabled": enabled})
+    conn.close()
+    return pid
+
+
 def test_create_run_ok(tmp_path):
     client, _ = _client(tmp_path, FakeRM())
     r = client.post("/api/runs", headers=CSRF, json={"time_range": "30d"})
     assert r.status_code == 201 and r.json()["id"] == 5
+
+
+def test_create_run_accepts_plant_id(tmp_path):
+    rm = FakeRM()
+    client, paths = _client(tmp_path, rm)
+    pid = _seed_plant(paths)
+    r = client.post("/api/runs", headers=CSRF,
+                    json={"time_range": "30d", "plant_id": pid})
+    assert r.status_code == 201 and r.json()["id"] == 5
+    assert rm.last_plant_id == pid
+
+
+def test_create_run_rejects_unknown_plant(tmp_path):
+    rm = FakeRM()
+    client, _ = _client(tmp_path, rm)
+    r = client.post("/api/runs", headers=CSRF,
+                    json={"time_range": "30d", "plant_id": 999})
+    assert r.status_code == 422
+    assert rm.last_plant_id is None
+
+
+def test_create_run_rejects_disabled_plant(tmp_path):
+    rm = FakeRM()
+    client, paths = _client(tmp_path, rm)
+    pid = _seed_plant(paths, enabled=False)
+    r = client.post("/api/runs", headers=CSRF,
+                    json={"time_range": "30d", "plant_id": pid})
+    assert r.status_code == 422
+    assert rm.last_plant_id is None
+
+
+def test_create_run_without_plant_id_is_fleet(tmp_path):
+    rm = FakeRM()
+    client, _ = _client(tmp_path, rm)
+    r = client.post("/api/runs", headers=CSRF, json={"time_range": "30d"})
+    assert r.status_code == 201
+    assert rm.last_plant_id is None
 
 
 def test_create_run_bad_range(tmp_path):

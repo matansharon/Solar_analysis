@@ -13,6 +13,7 @@ _RANGES = {"snapshot", "30d", "12mo", "all"}
 
 class RunBody(BaseModel):
     time_range: str
+    plant_id: int | None = None
 
 
 def _conn(request: Request):
@@ -25,12 +26,18 @@ def list_runs(limit: int = 50, offset: int = 0, conn=Depends(_conn)):
 
 
 @router.post("")
-def create_run(body: RunBody, request: Request):
+def create_run(body: RunBody, request: Request, conn=Depends(_conn)):
     if body.time_range not in _RANGES:
         return JSONResponse({"detail": "invalid time_range"}, status_code=422)
+    if body.plant_id is not None:
+        p = repo.get_plant(conn, body.plant_id)
+        if not p:
+            return JSONResponse({"detail": "system not found"}, status_code=422)
+        if not p["enabled"]:
+            return JSONResponse({"detail": "system is disabled"}, status_code=422)
     rm = request.app.state.run_manager
     try:
-        rid = rm.start_run("manual", body.time_range)
+        rid = rm.start_run("manual", body.time_range, plant_id=body.plant_id)
     except Busy as b:
         return JSONResponse({"detail": "busy", "active": b.active}, status_code=409)
     return JSONResponse({"id": rid}, status_code=201)
