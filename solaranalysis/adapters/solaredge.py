@@ -68,7 +68,7 @@ def _num2(x):
 
 
 def map_solaredge_fleet(site: dict, meas: dict, env: dict | None,
-                        live: dict | None) -> PlantData:
+                        live: dict | None, today: "date | None" = None) -> PlantData:
     """Pure mapper: one site's raw dashboard payloads -> PlantData."""
     site = site or {}
     meas = meas or {}
@@ -152,6 +152,14 @@ def map_solaredge_fleet(site: dict, meas: dict, env: dict | None,
             severity=AlertSeverity.WARNING,
             message="SolarEdge site alert (count from fleet view; open portal for detail)",
         ))
+
+    # A clean, complete previous-day energy point so a daily series accumulates
+    # even on snapshot runs (energy_timeseries is otherwise only filled for
+    # ranged runs). energyYesterday is already kWh, like the other counters.
+    ey = _num(meas.get("energyYesterday"))
+    if ey is not None:
+        yday = ((today or date.today()) - timedelta(days=1)).isoformat()
+        pd.energy_timeseries.append(EnergyPoint(yday, ey, "day"))
 
     return pd
 
