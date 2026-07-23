@@ -6,7 +6,7 @@ import sqlite3
 # tables automatically. Column additions to existing tables use a guarded
 # ALTER (see init_db) since CREATE TABLE IF NOT EXISTS can't add columns to
 # an existing table.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS runs(
   plants_summary TEXT,
   skipped_plants TEXT,
   notes TEXT,
-  error TEXT
+  error TEXT,
+  plant_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS plant_snapshots(
   id INTEGER PRIMARY KEY,
@@ -132,6 +133,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     for table in ("plant_snapshots", "energy_points"):
         if not _has_column(conn, table, "config_plant_id"):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN config_plant_id INTEGER")
+    if not _has_column(conn, "runs", "plant_id"):
+        conn.execute("ALTER TABLE runs ADD COLUMN plant_id INTEGER")
     conn.execute(
         "INSERT INTO settings(key,value) VALUES('schema_version',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

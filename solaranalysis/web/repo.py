@@ -228,13 +228,15 @@ def run_public(row) -> dict:
         "plants_summary": _dec(row["plants_summary"]),
         "skipped_plants": _dec(row["skipped_plants"]),
         "notes": _dec(row["notes"]), "error": row["error"],
+        "plant_id": row["plant_id"],
     }
 
 
-def create_run(conn, trigger, time_range, log_path, started_at) -> int:
+def create_run(conn, trigger, time_range, log_path, started_at, plant_id=None) -> int:
     cur = conn.execute(
-        "INSERT INTO runs(status,trigger,time_range,started_at,log_path) "
-        "VALUES('running',?,?,?,?)", (trigger, time_range, started_at, log_path))
+        "INSERT INTO runs(status,trigger,time_range,started_at,log_path,plant_id) "
+        "VALUES('running',?,?,?,?,?)",
+        (trigger, time_range, started_at, log_path, plant_id))
     conn.commit()
     return cur.lastrowid
 

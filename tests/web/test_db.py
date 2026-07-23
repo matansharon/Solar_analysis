@@ -78,6 +78,29 @@ def test_v2_db_migrates_to_v3_on_init(tmp_path):
     assert ver["value"] == str(db.SCHEMA_VERSION)
 
 
+_V3_RUNS_DDL = """
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS runs(
+  id INTEGER PRIMARY KEY,
+  status TEXT, trigger TEXT, time_range TEXT, runner_pid INTEGER,
+  started_at TEXT, finished_at TEXT, report_path TEXT, log_path TEXT,
+  plants_summary TEXT, skipped_plants TEXT, notes TEXT, error TEXT
+);
+"""
+
+
+def test_v3_db_migrates_to_v4_adds_run_plant_id(tmp_path):
+    c = db.connect(str(tmp_path / "app.db"))
+    c.executescript(_V3_RUNS_DDL)  # runs table pre-exists WITHOUT plant_id
+    c.execute("INSERT INTO settings(key,value) VALUES('schema_version','3')")
+    c.commit()
+    db.init_db(c)  # CREATE ... IF NOT EXISTS skips runs; guarded ALTER adds the column
+    run_cols = {r["name"] for r in c.execute("PRAGMA table_info(runs)")}
+    assert "plant_id" in run_cols
+    ver = c.execute("SELECT value FROM settings WHERE key='schema_version'").fetchone()
+    assert ver["value"] == str(db.SCHEMA_VERSION)
+
+
 def test_init_is_idempotent(tmp_path):
     c = _conn(tmp_path)
     db.init_db(c)  # second call must not raise

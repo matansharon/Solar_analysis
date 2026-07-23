@@ -46,3 +46,19 @@ def test_mark_interrupted(tmp_path):
                           log_path="logs/run-2.log", started_at="2026-07-04T00:00:00")
     repo.mark_interrupted(c, rid, finished_at="2026-07-04T00:05:00")
     assert repo.get_run(c, rid)["status"] == "interrupted"
+
+
+def test_create_run_persists_plant_id(tmp_path):
+    c = _conn(tmp_path)
+    rid = repo.create_run(c, trigger="manual", time_range="30d",
+                          log_path="logs/run-1.log",
+                          started_at="2026-07-23T00:00:00", plant_id=7)
+    assert repo.get_run(c, rid)["plant_id"] == 7
+
+
+def test_create_run_defaults_plant_id_null(tmp_path):
+    c = _conn(tmp_path)
+    rid = repo.create_run(c, trigger="scheduled", time_range="all",
+                          log_path="logs/run-2.log",
+                          started_at="2026-07-23T00:00:00")
+    assert repo.get_run(c, rid)["plant_id"] is None
