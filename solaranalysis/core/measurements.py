@@ -12,6 +12,7 @@ dedup to the latest fetch happening at read time in load_devices_latest.
 from __future__ import annotations
 import json
 import sqlite3
+import zlib
 from datetime import datetime, timezone
 
 from .schema import EnergyPoint, PlantData, PowerPoint, TimeRange
@@ -29,6 +30,7 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
         kpis = pd.to_dict()
         kpis.pop("energy_timeseries", None)
         kpis.pop("power_timeseries", None)
+        kpis.pop("raw_payloads", None)
         conn.execute(
             "INSERT INTO plant_snapshots"
             "(run_id, config_plant_id, plant_uid, source_platform, fetched_at_utc, "
@@ -84,6 +86,20 @@ def save_measurements(conn: sqlite3.Connection, plants: list[PlantData],
                 "config_plant_id=COALESCE(excluded.config_plant_id, power_points.config_plant_id), "
                 "updated_at_utc=excluded.updated_at_utc",
                 (pd.plant_id, pd.config_plant_id, p.timestamp_local, p.power_kw, now))
+        for r in pd.raw_payloads:
+            try:
+                blob = zlib.compress(
+                    json.dumps(r.body, ensure_ascii=False).encode("utf-8"))
+            except (TypeError, ValueError):
+                continue  # a non-JSON-serializable body is skipped, never fatal
+            conn.execute(
+                "INSERT INTO raw_payloads"
+                "(run_id, config_plant_id, plant_uid, platform, endpoint_label,"
+                " url, method, status, fetched_at_utc, payload_zjson) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (run_id, pd.config_plant_id, pd.plant_id, pd.source_platform,
+                 r.endpoint_label, r.url, r.method, r.status,
+                 pd.fetched_at_utc or now, blob))
 
 
 def load_series(conn: sqlite3.Connection, plant_uid: str, granularity: str,
