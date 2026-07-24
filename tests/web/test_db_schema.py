@@ -12,7 +12,7 @@ def test_init_db_creates_raw_payloads_and_bumps_version():
             "payload_zjson", "fetched_at_utc"} <= cols
     ver = conn.execute(
         "SELECT value FROM settings WHERE key='schema_version'").fetchone()[0]
-    assert ver == "5"
+    assert ver == str(db.SCHEMA_VERSION)
 
 
 def test_init_db_idempotent():
