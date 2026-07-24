@@ -40,3 +40,35 @@ def test_narrate_empty_when_nothing_flagged_block():
     # caller decides whether to include it. Just verify no crash on empty-ish input.
     out = report.narrate("=== DATA ===\nno anomalies", lang="Hebrew", client=FakeClient())
     assert isinstance(out, str)
+
+
+def test_render_report_md_has_narrative_and_tables():
+    analyses = {1: [_anom("A", "dead")], 2: []}
+    md = report.render_report_md(analyses, "NARRATIVE HERE", "2026-07-22",
+                                 site_names={1: "Baram", 2: "Golan"})
+    assert "SolarEdge Optimizers" in md and "2026-07-22" in md
+    assert "NARRATIVE HERE" in md
+    assert "| Severity |" in md            # a markdown table header
+    assert "dead" in md and "Baram" in md
+    assert "Golan" in md and "all clear" in md.lower()  # empty site
+
+
+def test_render_report_md_without_narrative():
+    md = report.render_report_md({1: [_anom("A", "watch")]}, None, "2026-07-22")
+    assert "SolarEdge Optimizers" in md
+    assert "watch" in md
+
+
+def test_subject_counts_flagged():
+    assert report.subject("2026-07-22", 3) == "SolarEdge Optimizers · 3 flagged · 2026-07-22"
+
+
+def test_resolve_recipients_prefers_optimizer_env(monkeypatch):
+    monkeypatch.setenv("OPTIMIZER_RECIPIENTS", "a@x.com, b@x.com")
+    assert report.resolve_recipients() == ["a@x.com", "b@x.com"]
+
+
+def test_resolve_recipients_falls_back_to_report_recipients(monkeypatch):
+    monkeypatch.delenv("OPTIMIZER_RECIPIENTS", raising=False)
+    monkeypatch.setenv("REPORT_RECIPIENTS", "c@x.com")
+    assert report.resolve_recipients() == ["c@x.com"]

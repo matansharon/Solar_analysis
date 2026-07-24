@@ -1,6 +1,8 @@
 """Grounded optimizer anomaly report: Python computes every figure; the Claude
 call writes narrative prose only (mirrors core.analyze.summarize_executive)."""
 from __future__ import annotations
+import os
+from ..web import mailer
 
 _SEVERITY_ORDER = ("dead", "underperforming", "degrading", "watch")
 
@@ -56,3 +58,48 @@ def narrate(block: str, lang: str, client=None) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+
+
+def subject(as_of_day: str, total_flagged: int) -> str:
+    return f"SolarEdge Optimizers · {total_flagged} flagged · {as_of_day}"
+
+
+def resolve_recipients() -> list[str]:
+    raw = os.getenv("OPTIMIZER_RECIPIENTS", "").strip()
+    if raw:
+        out, seen = [], set()
+        for part in raw.split(","):
+            a = part.strip()
+            if a and a not in seen:
+                seen.add(a)
+                out.append(a)
+        return out
+    return mailer.recipients()
+
+
+def _table(anoms) -> str:
+    rows = ["| Severity | Optimizer | S/N | String | Energy Wh | Color | Ratio | Reason |",
+            "|---|---|---|---|---|---|---|---|"]
+    for a in anoms:
+        color = "" if a.latest_color is None else f"{a.latest_color:.2f}"
+        ratio = "" if a.ratio_to_string is None else f"{a.ratio_to_string:.2f}"
+        energy = "" if a.latest_energy_wh is None else f"{a.latest_energy_wh:.0f}"
+        rows.append(f"| {a.severity} | {a.label or ''} | {a.optimizer_serial} | "
+                    f"{a.string_label or ''} | {energy} | {color} | {ratio} | {a.reason} |")
+    return "\n".join(rows)
+
+
+def render_report_md(analyses, narrative, as_of_day, site_names=None) -> str:
+    parts = [f"## SolarEdge Optimizers — {as_of_day}", ""]
+    if narrative:
+        parts += [narrative.strip(), ""]
+    for site_id in sorted(analyses):
+        anoms = analyses[site_id]
+        parts.append(f"### {_site_label(site_id, site_names)}")
+        parts.append("")
+        if anoms:
+            parts.append(_table(anoms))
+        else:
+            parts.append("_all clear — no optimizers flagged._")
+        parts.append("")
+    return "\n".join(parts)
