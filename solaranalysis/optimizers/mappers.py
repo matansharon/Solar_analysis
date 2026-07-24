@@ -56,3 +56,38 @@ def flatten_inventory(payload: dict) -> list[OptimizerInfo]:
 
     walk(root, None, None)
     return [i for i in out if i.serial]
+
+
+@dataclass
+class OptimizerEnergyRow:
+    inverter_serial: str | None
+    optimizer_serial: str
+    energy_wh: float | None
+    color: float | None
+    temperature_c: float | None
+
+
+def _num(x):
+    return x if isinstance(x, (int, float)) else None
+
+
+def map_by_inverter_energy(payload: dict) -> list[OptimizerEnergyRow]:
+    """energy/by-inverter payload -> per-optimizer rows (energy in watt-hours)."""
+    out: list[OptimizerEnergyRow] = []
+    for inv in (payload or {}).get("inverters") or []:
+        if not isinstance(inv, dict):
+            continue
+        inv_serial = inv.get("serial")
+        for op in inv.get("optimizers") or []:
+            if not isinstance(op, dict) or not op.get("serial"):
+                continue
+            energy = op.get("energy") or {}
+            temp = op.get("temperature") or {}
+            out.append(OptimizerEnergyRow(
+                inverter_serial=inv_serial,
+                optimizer_serial=op.get("serial"),
+                energy_wh=_num(energy.get("value")),
+                color=_num(op.get("color")),
+                temperature_c=_num(temp.get("temperature")),
+            ))
+    return out

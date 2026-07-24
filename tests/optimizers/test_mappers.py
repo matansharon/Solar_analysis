@@ -1,4 +1,47 @@
-from solaranalysis.optimizers.mappers import flatten_inventory, OptimizerInfo
+from solaranalysis.optimizers.mappers import flatten_inventory, OptimizerInfo, map_by_inverter_energy, OptimizerEnergyRow
+
+
+def _energy_payload():
+    return {"siteId": 1, "startDate": "2026-07-22", "endDate": "2026-07-22",
+            "inverters": [
+                {"serial": "INV-1", "energy": {"value": 100.0, "unit": "watt-hour"},
+                 "optimizers": [
+                     {"serial": "OPT-A", "energy": {"value": 5824.75, "unit": "watt-hour"},
+                      "temperature": {"temperature": None, "temperatureUnit": None},
+                      "color": 0.978},
+                     {"serial": "OPT-B", "energy": {"value": 0.0, "unit": "watt-hour"},
+                      "temperature": {"temperature": 41.5, "temperatureUnit": "C"},
+                      "color": 0.0}]},
+                {"serial": "INV-2", "optimizers": [
+                     {"serial": "OPT-C", "energy": {"value": 4000.0, "unit": "watt-hour"},
+                      "color": 0.71}]}]}
+
+
+def test_map_by_inverter_energy_flattens_all_optimizers():
+    rows = map_by_inverter_energy(_energy_payload())
+    assert len(rows) == 3
+    by = {r.optimizer_serial: r for r in rows}
+    assert isinstance(by["OPT-A"], OptimizerEnergyRow)
+    assert by["OPT-A"].inverter_serial == "INV-1"
+    assert by["OPT-A"].energy_wh == 5824.75
+    assert by["OPT-A"].color == 0.978
+    assert by["OPT-A"].temperature_c is None
+    assert by["OPT-B"].energy_wh == 0.0 and by["OPT-B"].temperature_c == 41.5
+    assert by["OPT-C"].inverter_serial == "INV-2" and by["OPT-C"].energy_wh == 4000.0
+
+
+def test_map_by_inverter_energy_tolerates_missing_pieces():
+    rows = map_by_inverter_energy({"inverters": [
+        {"serial": "INV-1", "optimizers": [
+            {"serial": "OPT-X"},  # no energy/color/temperature
+            {"energy": {"value": 1.0}}]}]})  # no serial -> skipped
+    assert len(rows) == 1
+    assert rows[0].optimizer_serial == "OPT-X"
+    assert rows[0].energy_wh is None and rows[0].color is None and rows[0].temperature_c is None
+
+
+def test_map_by_inverter_energy_empty():
+    assert map_by_inverter_energy({}) == []
 
 
 def _tree():
