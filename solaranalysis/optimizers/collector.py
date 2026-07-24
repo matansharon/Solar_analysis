@@ -50,6 +50,7 @@ def collect(conn, site_ids: list[int], days: list[str], now: str,
             res = collect_site(session, conn, sid, days, now)
             conn.commit()
         except Exception as e:  # isolate per-site failure
+            conn.rollback()
             res = {"site_id": sid, "error": str(e)}
         results.append(res)
     return results

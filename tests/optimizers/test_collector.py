@@ -67,3 +67,31 @@ def test_collect_isolates_per_site_failure():
     assert "error" in ok[99]
     # site 42 still persisted despite site 99 blowing up
     assert len(store.load_inventory(conn, 42)) == 1
+
+
+def test_collect_rolls_back_partial_write_on_failure():
+    conn = db.connect(":memory:"); db.init_db(conn)
+
+    class PartialFail(FakeBS):
+        """Saves inventory (via /logical/) then blows up on the energy
+        fetch, leaving a partial write pending in the shared connection."""
+        def get_json(self, url):
+            if "/logical/" in url:
+                return self.tree
+            if "/by-inverter" in url:
+                raise RuntimeError("network down mid-site")
+            return {}
+
+    failing_site, good_site = 99, 42
+    results = collector.collect(
+        conn=conn, site_ids=[failing_site, good_site],
+        days=["2026-07-22"], now="NOW",
+        bs_for={failing_site: PartialFail(), good_site: FakeBS()})
+
+    ok = {r["site_id"]: r for r in results}
+    assert "error" in ok[failing_site]
+    # the failing site's partial inventory write must be rolled back
+    assert store.load_inventory(conn, failing_site) == []
+    # the good site's inventory + energy must still be committed
+    assert len(store.load_inventory(conn, good_site)) == 1
+    assert len(store.load_energy(conn, good_site, "2026-07-22")) == 1
