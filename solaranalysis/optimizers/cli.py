@@ -21,7 +21,7 @@ from ..core.session_store import SessionStore
 from ..web import db, repo, crypto
 from ..web.paths import Paths
 from . import collector, layout_client
-from ._now import now_utc  # tiny helper, see below
+from ._now import now_utc
 
 
 def resolve_days(date_arg: str | None, backfill: int, today: date) -> list[str]:
@@ -71,6 +71,13 @@ def main(argv=None, today=None) -> int:
             site_ids = collector.parse_site_ids(layout_client.get_site_list(bs))
         now = now_utc()
         results = collector.collect(conn, site_ids, days, now, bs=bs)
+
+    if not site_ids:
+        # An empty site list is almost always a failed/unauthorized sitelist
+        # fetch, not a genuinely empty account — don't exit 0 silently.
+        print("no sites found (site list empty or unauthorized)")
+        conn.close()
+        return 3
 
     for r in results:
         if "error" in r:
