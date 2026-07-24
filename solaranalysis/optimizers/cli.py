@@ -17,11 +17,14 @@ from dotenv import load_dotenv
 
 from ..adapters._browser import BrowserSession
 from ..adapters.solaredge import SolarEdgeAdapter
+from ..core.report import render_email_html
 from ..core.session_store import SessionStore
-from ..web import db, repo, crypto
+from ..web import db, repo, crypto, mailer
 from ..web.paths import Paths
-from . import collector, layout_client
+from . import analyze, collector, layout_client, report, store
 from ._now import now_utc
+
+ANALYSIS_WINDOW_DAYS = 30
 
 
 def resolve_days(date_arg: str | None, backfill: int, today: date) -> list[str]:
@@ -36,14 +39,19 @@ def _solaredge_plant_id(conn) -> int | None:
     return None
 
 
-def main(argv=None, today=None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="solaranalysis.optimizers")
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--app-dir", required=True)
     ap.add_argument("--date")
     ap.add_argument("--backfill", type=int, default=1)
     ap.add_argument("--sites")
-    args = ap.parse_args(argv)
+    ap.add_argument("--no-email", action="store_true")
+    return ap
+
+
+def main(argv=None, today=None) -> int:
+    args = _build_parser().parse_args(argv)
 
     paths = Paths.create(args.data_dir, args.app_dir)
     load_dotenv(paths.env_file)
@@ -78,6 +86,40 @@ def main(argv=None, today=None) -> int:
         print("no sites found (site list empty or unauthorized)")
         conn.close()
         return 3
+
+    # --- analyze the accumulated series + email an anomaly report ---
+    from datetime import date as _date
+    as_of = days[-1]
+    since = collector.day_range(_date.fromisoformat(as_of), ANALYSIS_WINDOW_DAYS)[0]
+    site_names = {r["site_id"]: r.get("name") for r in []}  # names not fetched here
+    analyses = {}
+    for sid in site_ids:
+        inv = store.load_inventory(conn, sid)
+        rows = store.load_energy_window(conn, sid, since)
+        analyses[sid] = analyze.analyze_site(sid, inv, rows, as_of)
+    total_flagged = sum(len(v) for v in analyses.values())
+
+    lang = "Hebrew" if repo.get_app_settings(conn).get("output_language") == "he" else "English"
+    block = report.build_anomaly_block(analyses)
+    narrative = None
+    try:
+        narrative = report.narrate(block, lang)
+    except Exception as e:
+        print(f"narrative skipped: {e}")
+    md = report.render_report_md(analyses, narrative, as_of)
+
+    if args.no_email:
+        print(f"analysis complete: {total_flagged} optimizer(s) flagged (email skipped)")
+    elif mailer.is_configured() and report.resolve_recipients():
+        try:
+            html = render_email_html(md, "SolarEdge Optimizers",
+                                     f"{total_flagged} flagged · {as_of}")
+            mailer.send_report(report.subject(as_of, total_flagged), html)
+            print(f"emailed optimizer report: {total_flagged} flagged")
+        except Exception as e:
+            print(f"email failed: {e}")
+    else:
+        print(f"analysis complete: {total_flagged} flagged (email not configured)")
 
     for r in results:
         if "error" in r:
