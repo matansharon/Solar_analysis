@@ -107,3 +107,36 @@ def test_send_report_raises_on_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="sendMail failed"):
         mailer.send_report("s", "<p>x</p>", http_post=fake_post)
+
+
+def test_send_report_uses_to_override_not_report_recipients(monkeypatch):
+    # REPORT_RECIPIENTS is set but must be ignored when `to` is passed.
+    _set(monkeypatch, **_ALL, REPORT_RECIPIENTS="a@x.com, b@x.com")
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/token"):
+            return FakeResp(ok=True, payload={"access_token": "TOK"})
+        return FakeResp(ok=True, status=202)
+
+    mailer.send_report("Subj", "<p>hi</p>", to=["c@x.com", "d@x.com"], http_post=fake_post)
+    _, kwargs = calls[1]
+    addrs = [r["emailAddress"]["address"] for r in kwargs["json"]["message"]["toRecipients"]]
+    assert addrs == ["c@x.com", "d@x.com"]
+
+
+def test_send_report_falls_back_to_recipients_when_to_is_none(monkeypatch):
+    _set(monkeypatch, **_ALL, REPORT_RECIPIENTS="a@x.com, b@x.com")
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/token"):
+            return FakeResp(ok=True, payload={"access_token": "TOK"})
+        return FakeResp(ok=True, status=202)
+
+    mailer.send_report("Subj", "<p>hi</p>", to=None, http_post=fake_post)
+    _, kwargs = calls[1]
+    addrs = [r["emailAddress"]["address"] for r in kwargs["json"]["message"]["toRecipients"]]
+    assert addrs == ["a@x.com", "b@x.com"]

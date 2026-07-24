@@ -88,10 +88,8 @@ def main(argv=None, today=None) -> int:
         return 3
 
     # --- analyze the accumulated series + email an anomaly report ---
-    from datetime import date as _date
     as_of = days[-1]
-    since = collector.day_range(_date.fromisoformat(as_of), ANALYSIS_WINDOW_DAYS)[0]
-    site_names = {r["site_id"]: r.get("name") for r in []}  # names not fetched here
+    since = collector.day_range(date.fromisoformat(as_of), ANALYSIS_WINDOW_DAYS)[0]
     analyses = {}
     for sid in site_ids:
         inv = store.load_inventory(conn, sid)
@@ -114,7 +112,8 @@ def main(argv=None, today=None) -> int:
         try:
             html = render_email_html(md, "SolarEdge Optimizers",
                                      f"{total_flagged} flagged · {as_of}")
-            mailer.send_report(report.subject(as_of, total_flagged), html)
+            mailer.send_report(report.subject(as_of, total_flagged), html,
+                               to=report.resolve_recipients())
             print(f"emailed optimizer report: {total_flagged} flagged")
         except Exception as e:
             print(f"email failed: {e}")

@@ -49,18 +49,21 @@ def get_token(tenant: str, client_id: str, client_secret: str,
     return resp.json()["access_token"]
 
 
-def send_report(subject: str, html_body: str, http_post=requests.post) -> None:
-    """Send the report as one inline-HTML email to all recipients().
-    Reads sender/tenant/client/secret from env. Raises on token error or a
-    non-2xx Graph response (Graph returns 202 Accepted on success)."""
+def send_report(subject: str, html_body: str, to: list[str] | None = None,
+                http_post=requests.post) -> None:
+    """Send the report as one inline-HTML email to `to` (or all recipients()
+    when `to` is None). Reads sender/tenant/client/secret from env. Raises on
+    token error or a non-2xx Graph response (Graph returns 202 Accepted on
+    success)."""
     sender = os.getenv("GRAPH_SENDER")
     token = get_token(os.getenv("GRAPH_TENANT_ID"), os.getenv("GRAPH_CLIENT_ID"),
                       os.getenv("GRAPH_CLIENT_SECRET"), http_post=http_post)
+    recips = to if to is not None else recipients()
     payload = {
         "message": {
             "subject": subject,
             "body": {"contentType": "HTML", "content": html_body},
-            "toRecipients": [{"emailAddress": {"address": r}} for r in recipients()],
+            "toRecipients": [{"emailAddress": {"address": r}} for r in recips],
         },
         "saveToSentItems": True,
     }
