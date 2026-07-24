@@ -76,6 +76,7 @@ def _string_median_by_day(inventory, series):
 def analyze_site(site_id, inventory, energy_rows, as_of_day) -> list[OptimizerAnomaly]:
     series = _series_by_serial(energy_rows)
     string_med = _string_median_by_day(inventory, series)
+    string_of = _string_of(inventory)
     all_days = sorted({r["day"] for r in energy_rows if r["day"] <= as_of_day})
     recent = all_days[-UNDER_WINDOW:]
     out: list[OptimizerAnomaly] = []
@@ -136,7 +137,7 @@ def analyze_site(site_id, inventory, energy_rows, as_of_day) -> list[OptimizerAn
             opt_ratio = _window_ratio(byday, recent7, prior7)
             # string baseline: median of peer optimizers' own window-ratios
             peers = [s for s in series
-                     if s != serial and _string_of(inventory).get(s) == sl]
+                     if s != serial and string_of.get(s) == sl]
             peer_ratios = [pr for pr in
                            (_window_ratio(series[s], recent7, prior7) for s in peers)
                            if pr is not None]

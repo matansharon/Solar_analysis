@@ -100,10 +100,11 @@ def main(argv=None, today=None) -> int:
     lang = "Hebrew" if repo.get_app_settings(conn).get("output_language") == "he" else "English"
     block = report.build_anomaly_block(analyses)
     narrative = None
-    try:
-        narrative = report.narrate(block, lang)
-    except Exception as e:
-        print(f"narrative skipped: {e}")
+    if total_flagged > 0:
+        try:
+            narrative = report.narrate(block, lang)
+        except Exception as e:
+            print(f"narrative skipped: {e}")
     md = report.render_report_md(analyses, narrative, as_of)
 
     if args.no_email:
