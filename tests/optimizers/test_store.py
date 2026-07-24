@@ -51,11 +51,17 @@ def test_energy_isolated_by_site_and_day():
 
 def test_load_energy_window_filters_by_since_day():
     conn = _conn()
-    from solaranalysis.optimizers.mappers import OptimizerEnergyRow
     for day in ("2026-07-01", "2026-07-10", "2026-07-20"):
         store.save_energy(conn, 42, day,
                           [OptimizerEnergyRow("INV-1", "OPT-A", 100.0, 0.9, None)], now="n")
+    # Add a row for a different site on an in-range day to verify site isolation
+    store.save_energy(conn, 99, "2026-07-20",
+                      [OptimizerEnergyRow("INV-2", "OPT-B", 200.0, 0.8, None)], now="n")
     rows = store.load_energy_window(conn, 42, "2026-07-10")
+    # Verify boundary: includes since_day and later
     days = sorted(r["day"] for r in rows)
     assert days == ["2026-07-10", "2026-07-20"]
+    # Verify site isolation: only site 42, not site 99
+    assert all(r["site_id"] == 42 for r in rows)
+    assert len(rows) == 2
     assert all(r["optimizer_serial"] == "OPT-A" for r in rows)
