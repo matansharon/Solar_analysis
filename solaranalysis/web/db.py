@@ -6,7 +6,7 @@ import sqlite3
 # tables automatically. Column additions to existing tables use a guarded
 # ALTER (see init_db) since CREATE TABLE IF NOT EXISTS can't add columns to
 # an existing table.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -128,6 +128,36 @@ CREATE TABLE IF NOT EXISTS raw_payloads(
 );
 CREATE INDEX IF NOT EXISTS ix_raw_payloads_plant
   ON raw_payloads(plant_uid, fetched_at_utc);
+CREATE TABLE IF NOT EXISTS optimizers(
+  site_id INTEGER NOT NULL,
+  optimizer_serial TEXT NOT NULL,
+  label TEXT,                     -- displayOrder, e.g. '1.4.5'
+  name TEXT,                      -- 'Optimizer 1.4.5'
+  inverter_serial TEXT,
+  inverter_name TEXT,             -- 'Inverter 1'
+  string_label TEXT,              -- '1.4'
+  string_name TEXT,               -- 'String 1.4'
+  model TEXT,                     -- optimizer hardware model, e.g. 'P950-...'
+  status TEXT,
+  module_manufacturer TEXT,       -- not exposed by the tree; nullable in v1
+  module_model TEXT,
+  tilt REAL,
+  azimuth REAL,
+  first_seen_utc TEXT NOT NULL,
+  last_seen_utc TEXT NOT NULL,
+  PRIMARY KEY (site_id, optimizer_serial)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS optimizer_energy(
+  site_id INTEGER NOT NULL,
+  optimizer_serial TEXT NOT NULL,
+  day TEXT NOT NULL,              -- 'YYYY-MM-DD' (site-local day)
+  energy_wh REAL,
+  color REAL,                     -- SolarEdge normalized 0..1 (nullable)
+  temperature_c REAL,             -- nullable
+  updated_at_utc TEXT NOT NULL,
+  PRIMARY KEY (site_id, optimizer_serial, day)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_optenergy_day ON optimizer_energy(site_id, day);
 """
 
 
