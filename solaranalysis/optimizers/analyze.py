@@ -15,6 +15,9 @@ UNDER_MIN_DAYS = 3       # this many bad days within the window -> underperformi
 UNDER_WINDOW = 5         # "last N days" window
 STRING_RATIO = 0.70      # energy below this fraction of string-median = bad day
 WATCH_COLOR = 0.75       # latest-day color below this (not persistent) -> watch
+DEGRADE_MIN_HISTORY = 14  # need at least this many days to judge a trend
+DEGRADE_RECENT = 7        # compare last 7 days vs the prior 7
+DEGRADE_DROP = 0.15       # optimizer's recent/prior ratio this far below its string's
 
 _SEVERITY_RANK = {"dead": 0, "underperforming": 1, "degrading": 2, "watch": 3}
 
@@ -41,9 +44,24 @@ def _series_by_serial(energy_rows):
     return out
 
 
+def _string_of(inventory):
+    return {i["optimizer_serial"]: i.get("string_label") for i in inventory}
+
+
+def _mean(vals):
+    vals = [v for v in vals if v is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def _window_ratio(byday, days_recent, days_prior):
+    r = _mean([byday.get(d, {}).get("energy_wh") for d in days_recent])
+    p = _mean([byday.get(d, {}).get("energy_wh") for d in days_prior])
+    return (r / p) if (r is not None and p) else None
+
+
 def _string_median_by_day(inventory, series):
     """{day: {string_label: median energy_wh over that string's optimizers}}."""
-    string_of = {i["optimizer_serial"]: i.get("string_label") for i in inventory}
+    string_of = _string_of(inventory)
     per: dict[str, dict[str, list]] = {}
     for serial, byday in series.items():
         sl = string_of.get(serial)
@@ -109,6 +127,25 @@ def analyze_site(site_id, inventory, energy_rows, as_of_day) -> list[OptimizerAn
                                f"below {int(STRING_RATIO*100)}% of string median on "
                                f"{ratio_bad}/{len(recent)} days"))
             continue
+
+        # Degrading: declining faster than its string peers over two 7-day
+        # windows (needs enough history). Checked before watch.
+        if len(all_days) >= DEGRADE_MIN_HISTORY:
+            recent7 = all_days[-DEGRADE_RECENT:]
+            prior7 = all_days[-2 * DEGRADE_RECENT:-DEGRADE_RECENT]
+            opt_ratio = _window_ratio(byday, recent7, prior7)
+            # string baseline: median of peer optimizers' own window-ratios
+            peers = [s for s in series
+                     if s != serial and _string_of(inventory).get(s) == sl]
+            peer_ratios = [pr for pr in
+                           (_window_ratio(series[s], recent7, prior7) for s in peers)
+                           if pr is not None]
+            base = statistics.median(peer_ratios) if peer_ratios else None
+            if (opt_ratio is not None and base
+                    and opt_ratio < base * (1 - DEGRADE_DROP)):
+                out.append(anomaly("degrading",
+                    f"7-day output ratio {opt_ratio:.2f} vs string {base:.2f}"))
+                continue
 
         # Watch: latest-day color dip, not persistent.
         if latest_c is not None and latest_c < WATCH_COLOR:

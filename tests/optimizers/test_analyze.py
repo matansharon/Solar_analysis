@@ -69,3 +69,34 @@ def test_watch_single_day_dip():
     out = analyze_site(1, inv, rows, "2026-07-22")
     a = {x.optimizer_serial: x for x in out}
     assert a["A"].severity == "watch"  # single-day color<0.75, not persistent
+
+
+def _n_days(n, end="2026-07-22"):
+    from datetime import date, timedelta
+    e = date.fromisoformat(end)
+    return [(e - timedelta(days=n - 1 - i)).isoformat() for i in range(n)]
+
+
+def test_degrading_optimizer_flagged_when_declining_faster_than_string():
+    inv = _inv("A", "B", "C")
+    days = _n_days(14)
+    rows = []
+    # B, C: flat ~5000 across all 14 days (string baseline stable)
+    for s in ("B", "C"):
+        rows += _rows(s, [(d, 5000.0, 0.95) for d in days])
+    # A: prior 7 days ~5000, recent 7 days ~3800 (24% drop) while peers flat,
+    #    color stays >=0.75 so it is not caught as underperforming/watch.
+    a_vals = [(d, 5000.0, 0.95) for d in days[:7]] + [(d, 3800.0, 0.95) for d in days[7:]]
+    rows += _rows("A", a_vals)
+    out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
+    assert "A" in out and out["A"].severity == "degrading"
+    assert "B" not in out and "C" not in out
+
+
+def test_no_degrading_without_enough_history():
+    inv = _inv("A", "B")
+    days = _n_days(6)  # < DEGRADE_MIN_HISTORY
+    rows = _rows("A", [(d, 5000.0, 0.95) for d in days[:3]] + [(d, 3000.0, 0.95) for d in days[3:]])
+    rows += _rows("B", [(d, 5000.0, 0.95) for d in days])
+    out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
+    assert "A" not in out  # not enough history to judge a trend
