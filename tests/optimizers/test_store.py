@@ -47,3 +47,15 @@ def test_energy_isolated_by_site_and_day():
     assert len(store.load_energy(conn, 1, "2026-07-22")) == 1
     assert len(store.load_energy(conn, 2, "2026-07-22")) == 1
     assert len(store.load_energy(conn, 1, "2026-07-23")) == 1
+
+
+def test_load_energy_window_filters_by_since_day():
+    conn = _conn()
+    from solaranalysis.optimizers.mappers import OptimizerEnergyRow
+    for day in ("2026-07-01", "2026-07-10", "2026-07-20"):
+        store.save_energy(conn, 42, day,
+                          [OptimizerEnergyRow("INV-1", "OPT-A", 100.0, 0.9, None)], now="n")
+    rows = store.load_energy_window(conn, 42, "2026-07-10")
+    days = sorted(r["day"] for r in rows)
+    assert days == ["2026-07-10", "2026-07-20"]
+    assert all(r["optimizer_serial"] == "OPT-A" for r in rows)

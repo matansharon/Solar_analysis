@@ -45,3 +45,11 @@ def load_energy(conn: sqlite3.Connection, site_id: int, day: str) -> list[dict]:
     return [dict(r) for r in conn.execute(
         "SELECT * FROM optimizer_energy WHERE site_id=? AND day=? ORDER BY optimizer_serial",
         (site_id, day))]
+
+
+def load_energy_window(conn: sqlite3.Connection, site_id: int,
+                       since_day: str) -> list[dict]:
+    """All energy rows for a site on/after `since_day`, oldest optimizer/day first."""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM optimizer_energy WHERE site_id=? AND day>=? "
+        "ORDER BY optimizer_serial, day", (site_id, since_day))]
