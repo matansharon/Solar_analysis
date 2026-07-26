@@ -140,6 +140,29 @@ def test_collect_isolates_a_failing_day_and_rolls_it_back():
     assert len(store.load_channels(conn, "SN-A")) == 18
 
 
+def test_collect_rolls_back_channel_inventory_when_a_later_write_fails(monkeypatch):
+    # A page-0 failure (used above) raises inside fetch_day_rows, before any
+    # store.save_* call runs, so it can't prove rollback() undoes anything --
+    # there was nothing written yet to undo. To exercise the real guarantee,
+    # monkeypatch store.save_day_energy (the call right after save_channels in
+    # collect_day) to blow up only after save_channels has already inserted
+    # inventory rows, then confirm those rows are gone after collect() returns.
+    conn = db.connect(":memory:"); db.init_db(conn)
+
+    def boom(*a, **kw):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(store, "save_day_energy", boom)
+
+    results = collector.collect(
+        conn=conn, inv=INV, days=["2026-07-25"], now="NOW", bs=FakeBS())
+
+    assert "error" in results[0]
+    # save_channels already inserted 18 rows before save_day_energy blew up;
+    # without a real conn.rollback() these would still be here
+    assert store.load_channels(conn, "SN-A") == []
+    assert store.load_day_energy(conn, "SN-A", "2026-07-25") == []
+
+
 def test_collect_uses_one_session_for_every_day():
     conn = db.connect(":memory:"); db.init_db(conn)
     bs = FakeBS()
