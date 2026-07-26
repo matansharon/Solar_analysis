@@ -158,14 +158,17 @@ Query: `SELECT MIN/MAX/AVG(pv_iso_kohm), COUNT(*) FROM inverter_samples WHERE
 pv_iso_kohm IS NOT NULL` → all 4,472 rows have a non-null value.
 
 - Raw range: **105.0 – 65,530.0 kΩ**, median 1,100.0 kΩ.
-- **445 of 4,472 samples (~10%) read exactly 65,530.0 kΩ** — one below the
-  16-bit unsigned max (65,536) — which reads as an overflow/sentinel value
-  from the isolation-resistance sensor (plausibly emitted when the array is
-  dark, e.g. overnight, or the ISO check is otherwise inactive) rather than a
-  genuine measured resistance. This is flagged explicitly rather than
-  rationalized away: **C2 should exclude or specially handle the 65,530
-  sentinel** before using `pv_iso_kohm` in any threshold, or a threshold based
-  on the raw column will be dominated by this artifact.
+- **445 of 4,472 samples (~10%) read exactly 65,530.0 kΩ** — a fixed value near
+  but not at the 16-bit unsigned ceiling (65,530 = `0xFFFA`, five below the
+  65,535 max), so it reads as a sentinel the isolation-resistance sensor emits
+  when it has no valid reading (plausibly when the array is dark, e.g.
+  overnight, or the ISO check is otherwise inactive) rather than a genuine
+  measured resistance. The exact provenance is unconfirmed; what is measured is
+  that the value is discrete, constant, and accounts for ~10% of samples. This
+  is flagged explicitly rather than rationalized away: **C2 should exclude or
+  specially handle the 65,530 sentinel** before using `pv_iso_kohm` in any
+  threshold, or a threshold based on the raw column will be dominated by this
+  artifact.
 - Excluding the 65,530 sentinel (`pv_iso_kohm < 60000`, 4,027 samples): range
   **105.0 – 7,831.0 kΩ**, median 656.0 kΩ.
 - That non-sentinel range is itself a **~75× spread** (7,831 ÷ 105 ≈ 74.6),
