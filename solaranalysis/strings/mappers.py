@@ -241,3 +241,66 @@ def map_channel_samples(rows: list[dict],
                 voltage_v=_num(r.get(v_key.format(n=c.no))),
                 current_a=_num(r.get(i_key.format(n=c.no)))))
     return out
+
+
+@dataclass
+class InverterSample:
+    sampled_at: str
+    day: str
+    pac_w: float | None = None
+    e_ac_today_kwh: float | None = None
+    temp_c: float | None = None
+    temp2_c: float | None = None
+    temp3_c: float | None = None
+    temp4_c: float | None = None
+    temp5_c: float | None = None
+    pv_iso_kohm: float | None = None
+    gfci_ma: float | None = None
+    status: str | None = None
+    derating_mode: str | None = None
+    str_break: str | None = None
+    str_unbalance: str | None = None
+    str_unmatch: str | None = None
+    warn_code: str | None = None
+    fault_code1: str | None = None
+    fault_code2: str | None = None
+    fault_type: str | None = None
+
+
+def map_inverter_samples(rows: list[dict]) -> list[InverterSample]:
+    """A day's rows -> whole-inverter health and native string diagnostics.
+
+    `StrBreak` / `StrUnblance` (Growatt's spelling) / `StrUnmatch` are the
+    inverter's OWN string-fault verdicts, so they are authoritative when
+    non-zero. Codes are kept as text to preserve the raw token.
+    """
+    out: list[InverterSample] = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        day = sample_day(r)
+        at = r.get("time")
+        if not day or not at:
+            continue
+        out.append(InverterSample(
+            sampled_at=str(at), day=day,
+            pac_w=_num(r.get("pac")),
+            e_ac_today_kwh=_num(r.get("eacToday")),
+            temp_c=_num(r.get("temperature")),
+            temp2_c=_num(r.get("temperature2")),
+            temp3_c=_num(r.get("temperature3")),
+            temp4_c=_num(r.get("temperature4")),
+            temp5_c=_num(r.get("temperature5")),
+            pv_iso_kohm=_num(r.get("pvIso")),
+            gfci_ma=_num(r.get("gfci")),
+            status=_text(r.get("status")),
+            derating_mode=_text(r.get("deratingMode")),
+            str_break=_text(r.get("StrBreak")),
+            str_unbalance=_text(r.get("StrUnblance")),
+            str_unmatch=_text(r.get("StrUnmatch")),
+            warn_code=_text(r.get("warnCode")),
+            fault_code1=_text(r.get("faultCode1")),
+            fault_code2=_text(r.get("faultCode2")),
+            fault_type=_text(r.get("faultType")),
+        ))
+    return out

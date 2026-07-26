@@ -230,3 +230,47 @@ def test_map_channel_samples_skips_rows_without_a_parseable_time():
 def test_map_channel_samples_empty():
     assert m.map_channel_samples([], []) == []
     assert m.map_channel_samples(history_rows(), []) == []
+
+
+def test_map_inverter_samples_reads_health_and_flags():
+    samples = m.map_inverter_samples(history_rows())
+    assert len(samples) == 3
+    by = {s.sampled_at: s for s in samples}
+    peak = by["2026-07-25 12:00:00"]
+    assert isinstance(peak, m.InverterSample)
+    assert peak.day == "2026-07-25"
+    assert peak.pac_w == 40460.9
+    assert peak.e_ac_today_kwh == 135.2
+    assert peak.temp_c == 43.4 and peak.temp3_c == 52.3 and peak.temp5_c == 42.0
+    assert peak.pv_iso_kohm == 250.0     # arrives as the string "250"
+    assert peak.gfci_ma == 3.0           # arrives as the string "3"
+    assert peak.status == "1"            # arrives as the number 1
+
+
+def test_map_inverter_samples_preserves_flag_tokens_as_text():
+    by = {s.sampled_at: s for s in m.map_inverter_samples(history_rows())}
+    peak = by["2026-07-25 12:00:00"]
+    night = by["2026-07-25 00:02:56"]
+    # the live payload quotes these inconsistently; both must land as "0"
+    assert peak.str_break == "0" and night.str_break == "0"
+    assert peak.str_unbalance == "0"     # source field is spelled StrUnblance
+    assert peak.str_unmatch == "0"
+    assert peak.warn_code == "0"
+    assert peak.fault_code1 == "0" and peak.fault_code2 == "0"
+    assert peak.derating_mode == "0"
+
+
+def test_map_inverter_samples_flags_a_real_string_fault():
+    rows = [dict(r) for r in history_rows()]
+    rows[1]["StrBreak"] = "4"
+    rows[1]["StrUnblance"] = 1
+    by = {s.sampled_at: s for s in m.map_inverter_samples(rows)}
+    assert by["2026-07-25 12:00:00"].str_break == "4"
+    assert by["2026-07-25 12:00:00"].str_unbalance == "1"
+    assert by["2026-07-25 23:57:09"].str_break == "0"
+
+
+def test_map_inverter_samples_skips_unparseable_rows():
+    assert m.map_inverter_samples([{"pac": 1.0}]) == []      # no time
+    assert m.map_inverter_samples([]) == []
+    assert m.map_inverter_samples(["junk"]) == []
