@@ -136,8 +136,11 @@ Each portal exposes a different subset; missing metrics are marked
   count (online-status inferred from the site's ACTIVE state), alert count,
   current power. No per-inverter serials or revenue at fleet level.
 - **Growatt** — energy today & lifetime (kWh), lifetime revenue, CO₂, trees,
-  inverter status (decoded best-effort). Monthly/yearly energy and current
-  power are not exposed by the dashboard endpoints used.
+  inverter status (decoded best-effort), plus monthly/yearly energy and current
+  power derived from the per-device rows. A separate per-string collector
+  (`python -m solaranalysis.strings`) stores per-MPPT-input daily energy and the
+  full 5-minute per-channel series, including the inverter's own
+  `StrBreak`/`StrUnblance`/`StrUnmatch` diagnostics.
 - **SMA** — energy today/this-month/lifetime and specific yield from the PV
   System List. No device inventory, alerts, CO₂, or revenue in that view.
 
@@ -145,8 +148,7 @@ Each portal exposes a different subset; missing metrics are marked
 
 - **Time series** — per-plant daily/monthly energy series (for trend and
   worst-day anomaly detection) beyond the current summary metrics. SolarEdge
-  exposes a range energy endpoint; Growatt/SMA need their history endpoints
-  wired.
+  exposes a range energy endpoint; SMA needs its history endpoint wired.
 - **SMA depth** — device inventory and per-plant detail via the CSV download /
   per-plant pages, beyond the fleet list.
 
@@ -182,6 +184,13 @@ solaranalysis/
 │   ├── growatt.py         # Growatt (browser + internal JSON; token alt)
 │   ├── _growatt_v1.py     # Growatt OpenAPI v1 client (token mode)
 │   └── sma.py             # SMA Sunny Portal (table read)
+├── optimizers/            # SolarEdge per-optimizer collector + anomaly report
+├── strings/               # Growatt per-string collector (MPPT + string level)
+│   ├── history_client.py  # authenticated POSTs to /device/getMAXHistory
+│   ├── mappers.py         # pure: 5-minute samples -> channel/energy records
+│   ├── store.py           # schema v7 tables in app.db
+│   ├── collector.py       # per-day page walk with failure isolation
+│   └── cli.py             # python -m solaranalysis.strings
 └── prompts/system.txt     # Grounding contract for Claude
 tests/
 └── (unit tests: pure mappers, analyze, pipeline, …)

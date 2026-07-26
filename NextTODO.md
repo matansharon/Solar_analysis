@@ -9,6 +9,22 @@
 - The deploy is **hands-on-server work**: llmadmin answers on SMB/WinRM but this dev machine has no usable remote-exec path (WinRM needs a TrustedHosts change + elevation; RPC to the service manager is denied). Every `DEPLOYMENT.md` command has to be run in PowerShell on the server itself — including `nssm status SolarAnalysis`, so "not deployed" is an assumption that has never been verified from here.
 
 ## Done this session (2026-07-26)
+- **Phase C1 live backfill + baseline (final C1 task)**: ran
+  `python -m solaranalysis.strings --data-dir data --app-dir . --backfill 90`
+  against the real Growatt portal for the first time. The live `app.db`
+  additively migrated 6 → **schema v7** (the four new tables:
+  `inverter_channels`, `channel_day_energy`, `channel_samples`,
+  `inverter_samples`). Result: **16 real days** (2026-07-10 → 2026-07-25, one
+  fewer than the ~17 the earlier discovery spike anticipated — see the
+  baseline doc) plus 74 correct `no data` pre-install days, no `ERROR`s; 18
+  channels (6 MPPT + 12 string) confirmed; 80,496 `channel_samples` rows;
+  4,472 `inverter_samples` rows; a single all-`"0"` fault-flag combination
+  (no faults observed in the window). Measured statistics — per-input energy
+  range, share_of_total median/min/max, widest single-day share swing
+  (PV6, 0.0031, the noise floor), and the `pv_iso_kohm`/`temp3_c` spread —
+  are written up in
+  `docs/superpowers/plans/2026-07-26-growatt-string-baseline.md` for Phase C2
+  to calibrate thresholds against.
 - **Optimizer report polish** (2 backlog items, TDD, 410 → **417 tests**): friendly **site names** now reach the report — `collector.parse_site_names` reads them off the same sitelist payload `parse_site_ids` already used, and the CLI threads them into both the grounded block and the markdown, so headings read "Baram (site 2387929)". The fetch is guarded so name resolution can never sink a collection run, including the `--sites` path that previously skipped the call entirely. And **fully-silent optimizers are flagged dead**: a missing row is not a zero row, so an optimizer that drops out of the payload was invisible to every rule and fell through with a stale latest-day; it now reads "stopped reporting for N days". Extracted `cli.compose_report` as a testable seam, which also brought the all-clear narrative skip and the narrator-failure fallback under test.
 - **Found and fixed a deploy blocker in the docs**: `DEPLOYMENT.md` never mentioned `playwright install chromium`. Every portal login drives a real Chromium, so the first snapshot run on a fresh server would have failed — and the default install location (`%LOCALAPPDATA%` of the installing user) is invisible to a `LocalSystem` service anyway. Step 3 now installs to a machine-scope `PLAYWRIGHT_BROWSERS_PATH`.
 - **`DEPLOYMENT.md` §11**: the optimizer collector's dry run, 90-day backfill, and daily 06:30 Scheduled Task, each with a verify — plus the ordering dependency that it cannot run before the SolarEdge plant exists in the UI (exit 2). Added a Troubleshooting section covering the Playwright/LocalSystem case, stale `data\session_cache`, exit 2 vs exit 3, and the fact that a 0 exit code does not by itself mean mail went out.
@@ -23,6 +39,13 @@ Standalone `solaranalysis/optimizers/`: `mappers`/`layout_client`/`store`/`colle
 On top of B1's stored series: `optimizers/analyze.py` (pure `analyze_site` — dead / underperforming / degrading / watch, via the peer-normalized `color` + string-median + multi-day persistence + a recent-vs-prior degradation trend) and `optimizers/report.py` (grounded data block → Claude narrative → markdown → email-safe HTML via `core.report.render_email_html`). The `optimizers` CLI now analyzes + emails after collecting (`--no-email`; skips the Opus call on all-clear days; `OPTIMIZER_RECIPIENTS` override wired through a new `mailer.send_report(to=…)`). Subagent-driven TDD, whole-branch review "Ready to merge: Yes", 410 tests. Plan `docs/superpowers/plans/2026-07-24-optimizer-analysis-report.md`.
 
 ## Next
+- [ ] **Phase C2** — analyze + report + email for the Growatt string collector,
+  thresholds calibrated from
+  `docs/superpowers/plans/2026-07-26-growatt-string-baseline.md`.
+- [ ] **`DEPLOYMENT.md` §12** — the daily Growatt string collector Scheduled
+  Task.
+- [ ] **Retention prune for `channel_samples` / `inverter_samples`** — joins
+  the existing `optimizer_energy` / `raw_payloads` prune backlog item.
 - [ ] **First-time deploy to llmadmin per `DEPLOYMENT.md`** (confirm `SolarAnalysis` + port 8010 free); copy `.env` (ANTHROPIC_API_KEY + GRAPH_* + REPORT_RECIPIENTS [+ optional OPTIMIZER_RECIPIENTS]) and `config.yaml` by hand (both gitignored). **Run on the server** — see Deploy status above.
   - `DEPLOYMENT.md` step 3 now covers `playwright install chromium` with a machine-scope `PLAYWRIGHT_BROWSERS_PATH` — this was **missing** before and would have failed the first portal login under `LocalSystem`.
 - [ ] **Optimizer live smoke run (was B1 Task 8 + B2 Task 7)** — needs real SolarEdge creds; now written up as `DEPLOYMENT.md` §11 (dry run → `--backfill 90` → scheduled task). Confirm the 4 sites populate `optimizers`/`optimizer_energy` AND an anomaly email arrives; spot-check one flagged optimizer against the Digital-Twin panel.
