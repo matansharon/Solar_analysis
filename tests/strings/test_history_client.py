@@ -70,8 +70,36 @@ def test_get_history_page_propagates_after_exhausting_retries():
     assert len(bs.posts) == hc.RETRY_ATTEMPTS
 
 
-def test_get_history_page_returns_empty_dict_for_null_body():
+def test_get_history_page_raises_after_exhausting_retries_on_null_body():
     class NullBS:
+        def __init__(self):
+            self.posts = []
+
         def post_json(self, url, **kw):
+            self.posts.append((url, kw.get("form")))
             return None
-    assert hc.get_history_page(NullBS(), "SN", "2026-07-25", 0) == {}
+
+    bs = NullBS()
+    with pytest.raises(RuntimeError, match="2026-07-25.*page 0"):
+        hc.get_history_page(bs, "SN", "2026-07-25", 0, sleep=lambda s: None)
+    assert len(bs.posts) == hc.RETRY_ATTEMPTS
+
+
+def test_get_history_page_retries_a_null_body_then_succeeds():
+    class FlakyNullBS:
+        def __init__(self, fail_times):
+            self.posts = []
+            self.fail_times = fail_times
+
+        def post_json(self, url, **kw):
+            self.posts.append((url, kw.get("form")))
+            if len(self.posts) <= self.fail_times:
+                return None
+            return {"result": 1, "obj": {"datas": []}}
+
+    bs = FlakyNullBS(fail_times=2)
+    slept = []
+    out = hc.get_history_page(bs, "SN", "2026-07-25", 0, sleep=slept.append)
+    assert out == {"result": 1, "obj": {"datas": []}}
+    assert len(bs.posts) == 3          # two null bodies then a success
+    assert slept == [hc.RETRY_DELAY_S, hc.RETRY_DELAY_S]

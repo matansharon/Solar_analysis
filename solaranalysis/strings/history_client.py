@@ -34,13 +34,24 @@ def get_history_page(bs, sn: str, day: str, page: int,
     `page` is a 0-based PAGE index (the portal's `start` param), not a row
     offset. start-date == end-date restricts the query to that one day, which
     makes page 0 row 0 the day's last sample.
+
+    A None/falsy body from post_json means the HTTP response was non-2xx
+    (401/403/429/500/502) -- both legitimate empty-day cases (pre-install,
+    or beyond the portal's ~90-day window) come back as HTTP 200 with a
+    parseable envelope, so a None body can only be a transport/auth failure.
+    It is therefore treated the same as a stalled connection: fed through
+    this same retry loop, and raised if every attempt comes back empty.
     """
     form = {"maxSn": sn, "startDate": day, "endDate": day,
             "start": str(page), "allDatalogSns": datalog_sn}
     last = None
     for attempt in range(RETRY_ATTEMPTS):
         try:
-            return bs.post_json(f"{BASE}/device/getMAXHistory", form=form) or {}
+            body = bs.post_json(f"{BASE}/device/getMAXHistory", form=form)
+            if not body:
+                raise RuntimeError(
+                    f"history {day} page {page}: empty/non-2xx response from Growatt")
+            return body
         except Exception as e:
             last = e
             if attempt < RETRY_ATTEMPTS - 1:
