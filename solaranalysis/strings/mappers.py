@@ -75,3 +75,72 @@ def sample_day(row: dict) -> str | None:
     if len(day) != 10 or day[4] != "-" or day[7] != "-":
         return None
     return day
+
+
+@dataclass
+class ChannelInfo:
+    kind: str                        # 'mppt' | 'string'
+    no: int
+    parent_no: int | None = None     # string -> MPPT input; see below
+    group_voltage: float | None = None
+    lifetime_kwh: float | None = None   # MPPT inputs only (epvNTotal)
+
+
+def best_row(rows: list[dict]) -> dict:
+    """The day's highest-`pac` sample — the reading closest to solar peak.
+
+    Night rows carry zeros for every voltage and current, so anything that
+    needs a live electrical picture keys off this row rather than the first.
+    """
+    best, best_pac = {}, None
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        pac = _num(r.get("pac"))
+        if pac is not None and (best_pac is None or pac > best_pac):
+            best, best_pac = r, pac
+    if not best:
+        for r in rows or []:
+            if isinstance(r, dict):
+                return r
+    return best
+
+
+def channel_inventory(rows: list[dict]) -> list[ChannelInfo]:
+    """Which channels are live, from a day's sample rows.
+
+    An MPPT input counts as live once it has produced anything ever
+    (`epvNTotal > 0`); this rejects unused inputs that still float an
+    open-circuit voltage. An individual string counts as live when it carries
+    current at the day's peak; this rejects strings hanging off a dead input.
+
+    `parent_no` (string -> MPPT) is left None on purpose: pair-current sums do
+    not cleanly biject to `ipvN` on this hardware, so any mapping would be a
+    guess. Grouping parallel strings by exactly-equal `group_voltage` is
+    reliable and is what the Phase C2 imbalance rule uses.
+    """
+    rows = [r for r in (rows or []) if isinstance(r, dict)]
+    if not rows:
+        return []
+    peak = best_row(rows)
+    out: list[ChannelInfo] = []
+
+    for n in range(1, MPPT_MAX + 1):
+        lifetime = None
+        for r in rows:                      # any row carries the lifetime counter
+            lifetime = _num(r.get(f"epv{n}Total"))
+            if lifetime is not None:
+                break
+        if not lifetime:                    # None or 0.0 -> never produced
+            continue
+        out.append(ChannelInfo(kind="mppt", no=n,
+                               group_voltage=_num(peak.get(f"vpv{n}")),
+                               lifetime_kwh=lifetime))
+
+    for n in range(1, STRING_MAX + 1):
+        current = _num(peak.get(f"currentString{n}"))
+        if not current:                     # None or 0.0 -> not carrying current
+            continue
+        out.append(ChannelInfo(kind="string", no=n,
+                               group_voltage=_num(peak.get(f"vString{n}"))))
+    return out
