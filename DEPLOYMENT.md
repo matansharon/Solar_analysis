@@ -143,6 +143,11 @@ The per-optimizer collector is a **separate process**, not part of the web
 service — it has its own entry point and its own email. Run it after the fleet
 snapshot so both use the same day's data.
 
+**Do step 10 first.** The collector reads the enabled SolarEdge plant's stored
+credentials out of `app.db`, and those only exist once the plant has been added
+through the web UI. Run before that and it exits **2** with `no enabled
+SolarEdge plant configured in app.db`.
+
 First a manual dry run (no email) to confirm credentials and site discovery:
 
 ```powershell
@@ -203,6 +208,34 @@ Invoke-WebRequest http://localhost:8010/ | Select-Object StatusCode   # -> 200
 `git pull`. **Back up `data\app.db` and `data\secret.key` before risky changes**
 (stop service → copy → start). Losing `secret.key` makes the stored plant
 credentials undecryptable.
+
+## Troubleshooting
+
+- **Service won't start** → read `data\logs\service.err.log`. Usual causes: port
+  8010 busy, `.env` missing (it resolves relative to `AppDirectory`, so that must
+  be the repo root), or a dependency missing from the venv.
+- **A portal run fails with a Playwright/browser error** (`Executable doesn't
+  exist`, `BrowserType.launch`) → the Chromium from step 3 isn't visible to the
+  account the service runs as. Confirm `PLAYWRIGHT_BROWSERS_PATH` is set at
+  **Machine** scope and that `C:\apps\playwright-browsers` holds a `chromium-*`
+  folder, then restart the service so it picks the variable up.
+- **Login to a portal suddenly fails / sitelist unauthorized** → the cached
+  browser session expired. Delete `data\session_cache` and re-run; the adapter
+  re-authenticates and rewrites it.
+- **Optimizer run exits 2** (`no enabled SolarEdge plant configured`) → the
+  SolarEdge plant has not been added in the web UI yet. See §11.
+- **Optimizer run exits 3** (`no sites found`) → the sitelist call returned empty
+  or unauthorized. Almost always the session cache above, not an empty account.
+- **Email never arrives** → check the `GRAPH_*` values and that
+  `REPORT_RECIPIENTS` (or `OPTIMIZER_RECIPIENTS`) is set; the run prints
+  `email not configured` when they are missing and `email failed: …` when Graph
+  rejects the send. Both are printed, not raised — an exit code of 0 does not by
+  itself mean mail went out.
+- **Report arrives with tables but no prose** → the narrative call failed or was
+  skipped; the run prints `narrative skipped: …`. Check `ANTHROPIC_API_KEY`. On a
+  day with nothing flagged this is normal and intentional.
+- **Port 8010 already in use** → pick a free port, then update it in three
+  places: the `nssm install` arguments, the firewall rule, and `.deploy.yml`.
 
 ## Security checklist
 - [ ] `.env` and `data\` are gitignored, never committed.
