@@ -197,3 +197,47 @@ def map_day_energy(rows: list[dict]) -> list[ChannelDayEnergy]:
         if total and r.energy_kwh is not None:
             r.share_of_total = r.energy_kwh / total
     return out
+
+
+@dataclass
+class ChannelSample:
+    sampled_at: str
+    day: str
+    kind: str
+    no: int
+    power_w: float | None = None
+    voltage_v: float | None = None
+    current_a: float | None = None
+
+
+_FIELDS = {
+    "mppt": ("ppv{n}", "vpv{n}", "ipv{n}"),
+    "string": (None, "vString{n}", "currentString{n}"),   # no per-string power
+}
+
+
+def map_channel_samples(rows: list[dict],
+                        channels: list[ChannelInfo]) -> list[ChannelSample]:
+    """A day's rows x the live inventory -> the intraday per-channel series.
+
+    `channels` is a required filter: the payload carries all 16 MPPT and all 32
+    string keys with zero values, so emitting them all would store 48 rows per
+    sample instead of the 18 that are real hardware.
+    """
+    out: list[ChannelSample] = []
+    live = [c for c in (channels or []) if c.kind in _FIELDS]
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        day = sample_day(r)
+        at = r.get("time")
+        if not day or not at:
+            continue
+        for c in live:
+            p_key, v_key, i_key = _FIELDS[c.kind]
+            out.append(ChannelSample(
+                sampled_at=str(at), day=day, kind=c.kind, no=c.no,
+                power_w=None if p_key is None else _num(r.get(p_key.format(n=c.no))),
+                voltage_v=_num(r.get(v_key.format(n=c.no))),
+                current_a=_num(r.get(i_key.format(n=c.no)))))
+    return out

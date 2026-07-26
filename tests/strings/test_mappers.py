@@ -184,3 +184,49 @@ def test_map_day_energy_share_is_none_when_nothing_produced():
 
 def test_map_day_energy_empty():
     assert m.map_day_energy([]) == []
+
+
+def test_map_channel_samples_covers_live_channels_only():
+    rows = history_rows()
+    chans = m.channel_inventory(rows)
+    samples = m.map_channel_samples(rows, chans)
+    # 6 MPPT + 12 strings across 3 rows -- NOT 48 x 3, which is what emitting
+    # every present-but-zero key would give
+    assert len(samples) == 18 * 3
+    assert {(s.kind, s.no) for s in samples} == {(c.kind, c.no) for c in chans}
+
+
+def test_map_channel_samples_carries_the_electrical_triple():
+    rows = history_rows()
+    samples = m.map_channel_samples(rows, m.channel_inventory(rows))
+    peak = {(s.kind, s.no): s for s in samples
+            if s.sampled_at == "2026-07-25 12:00:00"}
+    mppt1 = peak[("mppt", 1)]
+    assert isinstance(mppt1, m.ChannelSample)
+    assert mppt1.power_w == 7975.5
+    assert mppt1.voltage_v == 409.0
+    assert mppt1.current_a == 19.5
+    assert mppt1.day == "2026-07-25"
+
+
+def test_map_channel_samples_strings_have_no_power():
+    rows = history_rows()
+    samples = m.map_channel_samples(rows, m.channel_inventory(rows))
+    peak = {(s.kind, s.no): s for s in samples
+            if s.sampled_at == "2026-07-25 12:00:00"}
+    s1, s2 = peak[("string", 1)], peak[("string", 2)]
+    assert s1.power_w is None and s2.power_w is None
+    assert s1.current_a == 8.900001 and s2.current_a == 10.6
+    # the same MPPT, so an exactly-equal voltage -- and a 16% current imbalance
+    assert s1.voltage_v == s2.voltage_v == 408.30002
+
+
+def test_map_channel_samples_skips_rows_without_a_parseable_time():
+    rows = [{"time": "garbage", "ppv1": 1.0}]
+    chans = [m.ChannelInfo(kind="mppt", no=1, lifetime_kwh=5.0)]
+    assert m.map_channel_samples(rows, chans) == []
+
+
+def test_map_channel_samples_empty():
+    assert m.map_channel_samples([], []) == []
+    assert m.map_channel_samples(history_rows(), []) == []
