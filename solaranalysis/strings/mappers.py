@@ -144,3 +144,56 @@ def channel_inventory(rows: list[dict]) -> list[ChannelInfo]:
         out.append(ChannelInfo(kind="string", no=n,
                                group_voltage=_num(peak.get(f"vString{n}"))))
     return out
+
+
+@dataclass
+class ChannelDayEnergy:
+    channel_no: int
+    energy_kwh: float | None = None
+    share_of_total: float | None = None
+    peak_w: float | None = None
+    peak_at: str | None = None
+    producing_minutes: int = 0
+
+
+def map_day_energy(rows: list[dict]) -> list[ChannelDayEnergy]:
+    """A day's sample rows -> one record per MPPT input that has ever produced.
+
+    `epvNToday` is a counter that resets at midnight, so the day's total is its
+    MAXIMUM over the day rather than blindly the newest sample — that stays
+    correct if a datalogger reconnect ever restates it.
+
+    Channels with `epvNTotal == 0` never produced and are skipped entirely; a
+    channel that HAS produced before but made nothing today still gets an
+    explicit 0.0 row, because a missing row is not a zero row.
+    """
+    rows = [r for r in (rows or []) if isinstance(r, dict)]
+    if not rows:
+        return []
+
+    out: list[ChannelDayEnergy] = []
+    for n in range(1, MPPT_MAX + 1):
+        lifetime = next((v for v in (_num(r.get(f"epv{n}Total")) for r in rows)
+                         if v is not None), None)
+        if not lifetime:
+            continue
+
+        energy, peak_w, peak_at, producing = None, None, None, 0
+        for r in rows:
+            e = _num(r.get(f"epv{n}Today"))
+            if e is not None and (energy is None or e > energy):
+                energy = e
+            p = _num(r.get(f"ppv{n}"))
+            if p is not None and p > 0:
+                producing += 1
+                if peak_w is None or p > peak_w:
+                    peak_w, peak_at = p, r.get("time")
+        out.append(ChannelDayEnergy(
+            channel_no=n, energy_kwh=energy, peak_w=peak_w, peak_at=peak_at,
+            producing_minutes=producing * SAMPLE_MINUTES))
+
+    total = sum(r.energy_kwh for r in out if r.energy_kwh is not None)
+    for r in out:
+        if total and r.energy_kwh is not None:
+            r.share_of_total = r.energy_kwh / total
+    return out

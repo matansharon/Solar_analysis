@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from solaranalysis.strings import mappers as m
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -123,3 +125,62 @@ def test_channel_inventory_empty_and_night_only():
     # discovered; strings need daylight current and so are not.
     assert [c.no for c in chans if c.kind == "mppt"] == [1, 2, 3, 4, 5, 6]
     assert [c for c in chans if c.kind == "string"] == []
+
+
+def test_map_day_energy_uses_the_days_max_counter():
+    rows = m.map_day_energy(history_rows())
+    assert [r.channel_no for r in rows] == [1, 2, 3, 4, 5, 6]
+    by = {r.channel_no: r for r in rows}
+    assert isinstance(by[1], m.ChannelDayEnergy)
+    assert by[1].energy_kwh == 57.3      # 23:57 row, not the 12:00 row's 25.9
+    assert by[2].energy_kwh == 60.4
+    assert by[4].energy_kwh == 37.3
+    assert by[6].energy_kwh == 41.2
+
+
+def test_map_day_energy_shares_sum_to_one():
+    rows = m.map_day_energy(history_rows())
+    total = 57.3 + 60.4 + 55.5 + 37.3 + 40.9 + 41.2      # 292.6
+    by = {r.channel_no: r for r in rows}
+    assert by[1].share_of_total == pytest.approx(57.3 / total)
+    assert by[4].share_of_total == pytest.approx(37.3 / total)
+    assert sum(r.share_of_total for r in rows) == pytest.approx(1.0)
+
+
+def test_map_day_energy_records_peak_power_and_time():
+    by = {r.channel_no: r for r in m.map_day_energy(history_rows())}
+    assert by[1].peak_w == 7975.5
+    assert by[1].peak_at == "2026-07-25 12:00:00"
+    assert by[4].peak_w == 5281.9
+    # only one of the three fixture rows is producing -> one 5-minute slot
+    assert by[1].producing_minutes == m.SAMPLE_MINUTES
+
+
+def test_map_day_energy_excludes_never_produced_inputs():
+    assert 7 not in [r.channel_no for r in m.map_day_energy(history_rows())]
+
+
+def test_map_day_energy_emits_a_real_zero_for_a_channel_that_stopped():
+    # epv3Total > 0 (it has produced before) but today it made nothing.
+    rows = [dict(r) for r in history_rows()]
+    for r in rows:
+        r["epv3Today"] = 0.0
+        r["ppv3"] = 0.0
+    by = {x.channel_no: x for x in m.map_day_energy(rows)}
+    assert 3 in by                       # present, not silently dropped
+    assert by[3].energy_kwh == 0.0
+    assert by[3].share_of_total == 0.0
+    assert by[3].producing_minutes == 0
+
+
+def test_map_day_energy_share_is_none_when_nothing_produced():
+    night = [r for r in history_rows() if r["time"].endswith("00:02:56")]
+    rows = m.map_day_energy(night)
+    assert [r.channel_no for r in rows] == [1, 2, 3, 4, 5, 6]
+    assert all(r.energy_kwh == 0.0 for r in rows)
+    assert all(r.share_of_total is None for r in rows)   # 0/0 is not a share
+    assert all(r.peak_at is None for r in rows)
+
+
+def test_map_day_energy_empty():
+    assert m.map_day_energy([]) == []
