@@ -25,6 +25,50 @@ def test_analysis_window_days_constant():
     assert cli.ANALYSIS_WINDOW_DAYS >= 14  # enough for the degradation trend
 
 
+def _anom(serial, sev="dead"):
+    from solaranalysis.optimizers.analyze import OptimizerAnomaly
+    return OptimizerAnomaly(1, serial, "1.4.1", "1.4", sev, "reason",
+                            "2026-07-22", 2500.0, 0.55, 5000.0, 0.5)
+
+
+def test_compose_report_names_sites_in_block_and_markdown():
+    seen = {}
+
+    def narrator(block, lang):
+        seen["block"] = block
+        return "NARRATIVE"
+
+    md, total = cli.compose_report({1: [_anom("A")]}, "2026-07-22", "English",
+                                   site_names={1: "Baram"}, narrator=narrator)
+    assert total == 1
+    assert "Baram" in seen["block"]      # the grounded block Claude reads is named
+    assert "Baram" in md and "NARRATIVE" in md
+
+
+def test_compose_report_skips_narrative_when_all_clear():
+    calls = []
+
+    def narrator(block, lang):
+        calls.append(block)
+        return "SHOULD NOT APPEAR"
+
+    md, total = cli.compose_report({1: []}, "2026-07-22", "English", narrator=narrator)
+    assert total == 0
+    assert calls == []                   # no model call on an all-clear day
+    assert "SHOULD NOT APPEAR" not in md
+    assert "all clear" in md.lower()
+
+
+def test_compose_report_survives_narrator_failure():
+    def narrator(block, lang):
+        raise RuntimeError("api down")
+
+    md, total = cli.compose_report({1: [_anom("A")]}, "2026-07-22", "English",
+                                   narrator=narrator)
+    assert total == 1
+    assert "| Severity |" in md          # the table still renders without prose
+
+
 def test_cli_has_no_email_flag():
     import argparse
     from solaranalysis.optimizers import cli

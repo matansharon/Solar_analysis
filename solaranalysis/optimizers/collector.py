@@ -16,6 +16,16 @@ def parse_site_ids(search_payload: dict) -> list[int]:
     return ids
 
 
+def parse_site_names(search_payload: dict) -> dict[int, str]:
+    """{site_id: display name} from the same payload as `parse_site_ids`."""
+    names = {}
+    for s in (search_payload or {}).get("page") or []:
+        if (isinstance(s, dict) and isinstance(s.get("solarFieldId"), int)
+                and isinstance(s.get("name"), str) and s["name"].strip()):
+            names[s["solarFieldId"]] = s["name"].strip()
+    return names
+
+
 def day_range(target: date, count: int) -> list[str]:
     """`count` consecutive ISO days ending at `target` (oldest first)."""
     count = max(1, count)

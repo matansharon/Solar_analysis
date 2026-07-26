@@ -39,6 +39,20 @@ def _solaredge_plant_id(conn) -> int | None:
     return None
 
 
+def compose_report(analyses, as_of, lang, site_names=None, narrator=None):
+    """(markdown, flagged count). The narrative call is skipped outright on an
+    all-clear day, and a narrator failure degrades to tables-only."""
+    total = sum(len(v) for v in analyses.values())
+    narrative = None
+    if total > 0:
+        try:
+            narrative = (narrator or report.narrate)(
+                report.build_anomaly_block(analyses, site_names), lang)
+        except Exception as e:
+            print(f"narrative skipped: {e}")
+    return report.render_report_md(analyses, narrative, as_of, site_names), total
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="solaranalysis.optimizers")
     ap.add_argument("--data-dir", required=True)
@@ -73,10 +87,16 @@ def main(argv=None, today=None) -> int:
     with BrowserSession(storage_state=state) as bs:
         adapter._authenticate(bs, had_state=bool(state))
         adapter._save_session(bs)
+        try:
+            search = layout_client.get_site_list(bs)
+        except Exception as e:  # names are a nicety; never sink the collection
+            print(f"site list fetch failed: {e}")
+            search = {}
         if args.sites:
             site_ids = [int(s) for s in args.sites.split(",") if s.strip()]
         else:
-            site_ids = collector.parse_site_ids(layout_client.get_site_list(bs))
+            site_ids = collector.parse_site_ids(search)
+        site_names = collector.parse_site_names(search)
         now = now_utc()
         results = collector.collect(conn, site_ids, days, now, bs=bs)
 
@@ -95,17 +115,9 @@ def main(argv=None, today=None) -> int:
         inv = store.load_inventory(conn, sid)
         rows = store.load_energy_window(conn, sid, since)
         analyses[sid] = analyze.analyze_site(sid, inv, rows, as_of)
-    total_flagged = sum(len(v) for v in analyses.values())
 
     lang = "Hebrew" if repo.get_app_settings(conn).get("output_language") == "he" else "English"
-    block = report.build_anomaly_block(analyses)
-    narrative = None
-    if total_flagged > 0:
-        try:
-            narrative = report.narrate(block, lang)
-        except Exception as e:
-            print(f"narrative skipped: {e}")
-    md = report.render_report_md(analyses, narrative, as_of)
+    md, total_flagged = compose_report(analyses, as_of, lang, site_names)
 
     if args.no_email:
         print(f"analysis complete: {total_flagged} optimizer(s) flagged (email skipped)")

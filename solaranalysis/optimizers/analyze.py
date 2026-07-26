@@ -84,8 +84,6 @@ def analyze_site(site_id, inventory, energy_rows, as_of_day) -> list[OptimizerAn
     for inv in inventory:
         serial = inv["optimizer_serial"]
         byday = series.get(serial, {})
-        if not byday:
-            continue
         sl = inv.get("string_label")
         latest_day = max((d for d in byday if d <= as_of_day), default=None)
         latest = byday.get(latest_day, {}) if latest_day else {}
@@ -97,6 +95,19 @@ def analyze_site(site_id, inventory, energy_rows, as_of_day) -> list[OptimizerAn
         def anomaly(sev, reason):
             return OptimizerAnomaly(site_id, serial, inv.get("label"), sl, sev,
                                     reason, latest_day, latest_e, latest_c, med, ratio)
+
+        # Silent: in the inventory but absent from the site's most recent days.
+        # A missing row is not a zero row, so the ~zero rule below cannot see it.
+        silent = 0
+        for d in reversed(all_days):
+            if d in byday:
+                break
+            silent += 1
+        if silent >= DEAD_DAYS:
+            out.append(anomaly("dead", f"stopped reporting for {silent} days"))
+            continue
+        if not byday:
+            continue  # no rows, and too little site history to call it silent
 
         # Dead: the most-recent DEAD_DAYS days are all ~zero (color or energy).
         last_days = all_days[-DEAD_DAYS:]

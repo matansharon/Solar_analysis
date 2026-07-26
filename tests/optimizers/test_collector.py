@@ -11,6 +11,15 @@ def test_parse_site_ids():
     assert collector.parse_site_ids({}) == []
 
 
+def test_parse_site_names_maps_id_to_name():
+    payload = {"page": [{"solarFieldId": 2387929, "name": "Baram"},
+                        {"solarFieldId": 2257529, "name": "Golan"},
+                        {"solarFieldId": 3, "name": None},   # no usable name
+                        {"name": "no id"}, "junk"]}
+    assert collector.parse_site_names(payload) == {2387929: "Baram", 2257529: "Golan"}
+    assert collector.parse_site_names({}) == {}
+
+
 def test_day_range_counts_back_from_target():
     assert collector.day_range(date(2026, 7, 22), 1) == ["2026-07-22"]
     assert collector.day_range(date(2026, 7, 22), 3) == [

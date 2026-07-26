@@ -100,3 +100,36 @@ def test_no_degrading_without_enough_history():
     rows += _rows("B", [(d, 5000.0, 0.95) for d in days])
     out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
     assert "A" not in out  # not enough history to judge a trend
+
+
+def test_silent_optimizer_flagged_dead():
+    # A reports through 07-20 then vanishes from the payload entirely. A
+    # missing row is not a zero row, so the ~zero-output rule cannot see it.
+    inv = _inv("A", "B", "C")
+    rows = _rows("A", [(d, 5000.0, 0.97) for d in DAYS[:3]])
+    for s in ("B", "C"):
+        rows += _rows(s, [(d, 5000.0, 0.97) for d in DAYS])
+    out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
+    assert out["A"].severity == "dead"
+    assert "stopped reporting" in out["A"].reason
+    assert "B" not in out and "C" not in out
+
+
+def test_optimizer_with_no_rows_at_all_flagged_dead():
+    inv = _inv("A", "B", "C")
+    rows = []
+    for s in ("B", "C"):
+        rows += _rows(s, [(d, 5000.0, 0.97) for d in DAYS])
+    out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
+    assert out["A"].severity == "dead"
+    assert out["A"].latest_day is None
+
+
+def test_single_missing_day_is_not_dead():
+    # One absent day is a collection hiccup, not a fault — needs DEAD_DAYS.
+    inv = _inv("A", "B", "C")
+    rows = _rows("A", [(d, 5000.0, 0.97) for d in DAYS[:4]])
+    for s in ("B", "C"):
+        rows += _rows(s, [(d, 5000.0, 0.97) for d in DAYS])
+    out = {x.optimizer_serial: x for x in analyze_site(1, inv, rows, "2026-07-22")}
+    assert "A" not in out
