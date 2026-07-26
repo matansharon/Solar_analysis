@@ -37,18 +37,34 @@ git clone https://github.com/matansharon/Solar_analysis.git solar-analysis
 cd C:\apps\solar-analysis
 git checkout master; git pull
 ```
-**Verify:** `git log --oneline -1` shows the latest commit (0a64482 or newer);
-`solaranalysis\web\__main__.py` and `frontend\package.json` are present.
+**Verify:** `git log --oneline -1` matches the newest commit on the dev machine
+(`git log origin/master --oneline -1` there); `solaranalysis\web\__main__.py` and
+`frontend\package.json` are present.
 
-### 3. Backend venv
+### 3. Backend venv + Playwright browser
 ```powershell
 cd C:\apps\solar-analysis
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+Every portal login drives a real Chromium (`solaranalysis.adapters._browser`), so
+the browser binary must be installed **to a machine-wide path** — by default
+Playwright installs under the *installing user's* `%LOCALAPPDATA%\ms-playwright`,
+which a service running as `LocalSystem` cannot see:
+
+```powershell
+[Environment]::SetEnvironmentVariable("PLAYWRIGHT_BROWSERS_PATH", "C:\apps\playwright-browsers", "Machine")
+$env:PLAYWRIGHT_BROWSERS_PATH = "C:\apps\playwright-browsers"
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+Setting it at `Machine` scope means both the NSSM service and the scheduled task
+in step 11 inherit it. (Open a new shell after this for the variable to appear.)
+
 **Verify:** `.\.venv\Scripts\python.exe -c "import fastapi, uvicorn, anthropic"`
-exits silently.
+exits silently, and `C:\apps\playwright-browsers` contains a `chromium-*` folder.
 
 ### 4. Build the frontend
 ```powershell
@@ -117,8 +133,62 @@ the three vendor plants, trigger a **manual snapshot run**, and confirm:
 - the run completes in the UI (report + dashboard written), and
 - the dashboard email arrives at the `REPORT_RECIPIENTS` address.
 
-Then create the daily schedule in the UI. The scheduler runs **inside this
-service** — the service being up is what makes scheduled report emails go out.
+Then create the daily schedule in the UI (Settings → Schedules, ~06:00, all days,
+range `snapshot`). The scheduler runs **inside this service** — the service being
+up is what makes scheduled report emails go out.
+
+### 11. Daily optimizer collector + anomaly report (scheduled task)
+
+The per-optimizer collector is a **separate process**, not part of the web
+service — it has its own entry point and its own email. Run it after the fleet
+snapshot so both use the same day's data.
+
+First a manual dry run (no email) to confirm credentials and site discovery:
+
+```powershell
+cd C:\apps\solar-analysis
+.\.venv\Scripts\python.exe -m solaranalysis.optimizers `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
+  --date 2026-07-25 --no-email
+```
+**Verify:** it prints one `site <id>: N optimizers, M energy rows over 1 day(s)`
+line per site (four expected) and `analysis complete: … (email skipped)`. An
+exit code of 3 (`no sites found`) means the sitelist call was unauthorized.
+
+Then backfill history so the degradation trend has something to work with
+(needs ≥14 days; this takes a while — one API round-trip per site per day):
+
+```powershell
+.\.venv\Scripts\python.exe -m solaranalysis.optimizers `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
+  --backfill 90 --no-email
+```
+
+Register the daily task (06:30, after the 06:00 fleet run):
+
+```powershell
+$app = "C:\apps\solar-analysis"
+$action = New-ScheduledTaskAction -Execute "$app\.venv\Scripts\python.exe" `
+  -Argument "-m solaranalysis.optimizers --data-dir $app\data --app-dir $app" `
+  -WorkingDirectory $app
+$trigger  = New-ScheduledTaskTrigger -Daily -At 6:30am
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+Register-ScheduledTask -TaskName "SolarAnalysis-Optimizers" -Action $action `
+  -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest
+```
+
+`-WorkingDirectory` must be the repo root — `.env` resolves relative to it, and
+that is where `OPTIMIZER_RECIPIENTS` / `ANTHROPIC_API_KEY` / `GRAPH_*` come from.
+Recipients fall back to `REPORT_RECIPIENTS` when `OPTIMIZER_RECIPIENTS` is unset.
+
+**Verify:** `Start-ScheduledTask -TaskName "SolarAnalysis-Optimizers"`, then
+`(Get-ScheduledTaskInfo "SolarAnalysis-Optimizers").LastTaskResult` → `0`, and an
+anomaly email arrives. Spot-check one flagged optimizer against the site's
+Digital Twin panel in the SolarEdge portal before trusting the run.
+
+On an all-clear day the report still emails, but the narrative model call is
+skipped — a tables-only email is expected, not a failure.
 
 ## Update an existing deployment
 ```powershell
