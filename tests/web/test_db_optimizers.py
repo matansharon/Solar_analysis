@@ -15,4 +15,4 @@ def test_init_db_creates_optimizer_tables_and_bumps_version():
             "temperature_c", "updated_at_utc"} <= e_cols
     ver = conn.execute(
         "SELECT value FROM settings WHERE key='schema_version'").fetchone()[0]
-    assert ver == "6"
+    assert ver == str(db.SCHEMA_VERSION)

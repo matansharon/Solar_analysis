@@ -6,7 +6,7 @@ import sqlite3
 # tables automatically. Column additions to existing tables use a guarded
 # ALTER (see init_db) since CREATE TABLE IF NOT EXISTS can't add columns to
 # an existing table.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plants(
@@ -158,6 +158,61 @@ CREATE TABLE IF NOT EXISTS optimizer_energy(
   PRIMARY KEY (site_id, optimizer_serial, day)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ix_optenergy_day ON optimizer_energy(site_id, day);
+CREATE TABLE IF NOT EXISTS inverter_channels(
+  device_sn TEXT NOT NULL,
+  channel_kind TEXT NOT NULL CHECK (channel_kind IN ('mppt','string')),
+  channel_no INTEGER NOT NULL,
+  parent_channel_no INTEGER,        -- for 'string': its MPPT input; unverifiable
+                                    -- on this hardware, so left NULL in C1
+  group_voltage REAL,               -- vpvN for 'mppt', vStringN for 'string';
+                                    -- exactly-equal values group parallel strings
+  plant_uid TEXT,                   -- e.g. 'growatt-10950561'
+  lifetime_kwh REAL,                -- epvNTotal; 0 => never produced => excluded
+  first_seen_utc TEXT NOT NULL,
+  last_seen_utc TEXT NOT NULL,
+  PRIMARY KEY (device_sn, channel_kind, channel_no)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS channel_day_energy(
+  device_sn TEXT NOT NULL,
+  channel_no INTEGER NOT NULL,      -- MPPT inputs only (the only tier with energy)
+  day TEXT NOT NULL,                -- 'YYYY-MM-DD', plant-local
+  energy_kwh REAL,
+  share_of_total REAL,              -- of the plant's PV day total; weather-immune
+  peak_w REAL,
+  peak_at TEXT,
+  producing_minutes INTEGER,
+  updated_at_utc TEXT NOT NULL,
+  PRIMARY KEY (device_sn, channel_no, day)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_chanenergy_day ON channel_day_energy(device_sn, day);
+CREATE TABLE IF NOT EXISTS channel_samples(
+  device_sn TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,         -- 'YYYY-MM-DD HH:MM:SS', plant-local
+  day TEXT NOT NULL,
+  channel_kind TEXT NOT NULL CHECK (channel_kind IN ('mppt','string')),
+  channel_no INTEGER NOT NULL,
+  power_w REAL,                     -- NULL for 'string' (not reported)
+  voltage_v REAL,
+  current_a REAL,
+  PRIMARY KEY (device_sn, sampled_at, channel_kind, channel_no)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_chansamples_day ON channel_samples(device_sn, day);
+CREATE TABLE IF NOT EXISTS inverter_samples(
+  device_sn TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  day TEXT NOT NULL,
+  pac_w REAL,
+  e_ac_today_kwh REAL,
+  temp_c REAL, temp2_c REAL, temp3_c REAL, temp4_c REAL, temp5_c REAL,
+  pv_iso_kohm REAL,
+  gfci_ma REAL,
+  status TEXT,
+  derating_mode TEXT,
+  str_break TEXT, str_unbalance TEXT, str_unmatch TEXT,
+  warn_code TEXT, fault_code1 TEXT, fault_code2 TEXT, fault_type TEXT,
+  PRIMARY KEY (device_sn, sampled_at)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_invsamples_day ON inverter_samples(device_sn, day);
 """
 
 
