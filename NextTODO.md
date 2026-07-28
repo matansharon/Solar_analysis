@@ -53,7 +53,15 @@ On top of B1's stored series: `optimizers/analyze.py` (pure `analyze_site` — d
     insight already derived for share-of-total. **Gather this calibration data
     before writing rule 6.**
   - **The noise floor for share-of-total is 0.36 percentage points** (PV6
-    full-window max−min). A "share collapse" rule must trigger well outside it.
+    full-window max−min), and **treat it as a lower bound, not a ceiling.** A
+    smoke test on 2026-07-28 collected two further days (07-26, 07-27; the series
+    is now **18 contiguous days**, 07-10 → 07-27). Five of six inputs landed
+    inside their 16-day envelope — but **PV4 exceeded its baseline max on both
+    new days** (0.12821 and 0.12803 vs a measured max of 0.1279). A 0.03pp
+    excursion, no kind of fault, but direct evidence that a 16-day max−min
+    understates the long-run spread. Recompute the envelope from whatever is
+    stored when C2 sets its thresholds rather than hardcoding the baseline doc's
+    figures.
   - **Group pairs from `channel_samples.voltage_v`** at each day's peak, not from
     `inverter_channels.group_voltage` — the latter is a last-write-wins snapshot,
     the former is immutable history. `parent_channel_no` is deliberately NULL and
