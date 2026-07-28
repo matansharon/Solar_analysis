@@ -195,6 +195,103 @@ Digital Twin panel in the SolarEdge portal before trusting the run.
 On an all-clear day the report still emails, but the narrative model call is
 skipped — a tables-only email is expected, not a failure.
 
+### 12. Daily Growatt string collector (scheduled task)
+
+Like the optimizer collector, this is a **separate process** with its own entry
+point. It collects per-MPPT-input daily energy plus the full 5-minute
+per-channel series for the Growatt inverter. **In this phase (C1) it does not
+email anything** — analysis and the anomaly report are Phase C2. Until then the
+task's only success signal is its exit code, so the verify below matters more
+than it does for §11.
+
+**This code must be on the server first.** `master` was 22 commits ahead of
+`origin/master` when C1 merged — step 2 pulls from origin, so **push before
+deploying** or the server will not have `solaranalysis/strings/` at all.
+
+**Do step 10 first.** Credentials come from the enabled Growatt plant's stored
+row in `app.db`, which only exists once the plant is added through the web UI.
+Run before that and it exits **2** (`no enabled Growatt plant configured in
+app.db`).
+
+Exit codes: **0** clean · **2** no enabled Growatt plant · **3** the plant or
+device list came back empty (almost always a failed/unauthorized fetch, not a
+genuinely deviceless plant) · **4** one or more days failed to collect.
+
+First a dry run for a single day:
+
+```powershell
+cd C:\apps\solar-analysis
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe -m solaranalysis.strings `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
+  --backfill 1
+```
+**Verify:** one line per day reading
+`<serial> <date>: 18 channels, 6 energy rows, ~5184 samples, 4/4 pages`, and
+exit code 0. **`18 channels` and `4/4 pages` are the two numbers that confirm
+the whole chain** — 6 MPPT inputs plus 12 individual strings, and all four pages
+of the day walked. A `PARTIAL` suffix means pages 1–3 failed; the day's energy
+still landed but its intraday series is incomplete.
+
+Then backfill the available history:
+
+```powershell
+.\.venv\Scripts\python.exe -m solaranalysis.strings `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
+  --backfill 90
+```
+
+**Expect most days to print `no data (pre-install or out of range)`, and that is
+not an error.** The current inverter (`MZHRF6K002`) was commissioned 2026-07-10,
+and the portal hard-rejects queries beyond roughly 90 days, so a 90-day backfill
+legitimately finds only the days since commissioning. As of 2026-07-28 that is
+18 days. `ERROR` lines are the real failure signal — re-run those dates
+individually with `--date`, which is safe because every write is an idempotent
+upsert.
+
+Register the daily task (06:45, after the 06:30 optimizer run):
+
+```powershell
+$app = "C:\apps\solar-analysis"
+$action = New-ScheduledTaskAction -Execute "$app\.venv\Scripts\python.exe" `
+  -Argument "-m solaranalysis.strings --data-dir $app\data --app-dir $app" `
+  -WorkingDirectory $app
+$trigger  = New-ScheduledTaskTrigger -Daily -At 6:45am
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+Register-ScheduledTask -TaskName "SolarAnalysis-Strings" -Action $action `
+  -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest
+Set-ScheduledTask -TaskName "SolarAnalysis-Strings" -Settings $settings
+```
+
+Set `PYTHONIOENCODING=utf-8` for the task as well — the CLI prints a Unicode em
+dash, and Phase C2 adds Hebrew report output. Either add it as a machine-scope
+environment variable or wrap the call in a one-line `.cmd`; without it the
+progress line renders as a mangled glyph (harmless today, but it will matter
+once C2 emails Hebrew).
+
+**Verify:** `Start-ScheduledTask -TaskName "SolarAnalysis-Strings"`, then
+`(Get-ScheduledTaskInfo "SolarAnalysis-Strings").LastTaskResult` → `0`. A `4`
+means at least one day failed — re-run that date manually. Confirm the data
+landed:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from solaranalysis.web import db; c=db.connect(r'C:\apps\solar-analysis\data\app.db'); print('days', c.execute('SELECT COUNT(DISTINCT day) FROM channel_day_energy').fetchone()[0]); print('channels', c.execute('SELECT COUNT(*) FROM inverter_channels').fetchone()[0]); print('samples', c.execute('SELECT COUNT(*) FROM channel_samples').fetchone()[0])"
+```
+
+**Disk:** this table grows about **0.73 MB/day** (~260 MB/year) unpruned, in the
+same `app.db` as the web app's data. Survivable for a single plant, but the DB
+will dominate backups within a year — a retention prune for `channel_samples` /
+`inverter_samples` is a tracked backlog item. Watch free space on the data drive
+if you also enable §11's optimizer history.
+
+**First run migrates the database.** `db.init_db()` additively adds the four v7
+tables (`inverter_channels`, `channel_day_energy`, `channel_samples`,
+`inverter_samples`) on first execution. It is `CREATE TABLE IF NOT EXISTS` only
+— no existing table is altered or dropped — and this path has been exercised
+against a real populated database. Still, take a copy of `app.db` before the
+first run if the deployment already holds data you care about.
+
 ## Update an existing deployment
 ```powershell
 nssm stop SolarAnalysis
