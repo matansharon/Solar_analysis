@@ -41,6 +41,14 @@ def save_day_energy(conn: sqlite3.Connection, device_sn: str, day: str,
 
 def save_channel_samples(conn: sqlite3.Connection, device_sn: str,
                          samples: list[ChannelSample]) -> None:
+    """`channel_samples` is a WITHOUT ROWID table whose primary key leads with
+    `sampled_at`. The collector's rows arrive newest-first, so writing them as
+    given inserts strictly descending keys -- SQLite can only fast-path
+    appends at the right edge of a B-tree, so descending inserts split pages
+    mid-way and settle at roughly half the fill of ascending ones. Sorting
+    ascending by primary-key order before the executemany keeps every insert
+    an append."""
+    ordered = sorted(samples, key=lambda s: (s.sampled_at, s.kind, s.no))
     conn.executemany(
         "INSERT INTO channel_samples"
         "(device_sn, sampled_at, day, channel_kind, channel_no, power_w,"
@@ -49,7 +57,7 @@ def save_channel_samples(conn: sqlite3.Connection, device_sn: str,
         "power_w=excluded.power_w, voltage_v=excluded.voltage_v, "
         "current_a=excluded.current_a",
         [(device_sn, s.sampled_at, s.day, s.kind, s.no, s.power_w, s.voltage_v,
-          s.current_a) for s in samples])
+          s.current_a) for s in ordered])
 
 
 _INV_COLS = ("pac_w", "e_ac_today_kwh", "temp_c", "temp2_c", "temp3_c",
@@ -60,6 +68,10 @@ _INV_COLS = ("pac_w", "e_ac_today_kwh", "temp_c", "temp2_c", "temp3_c",
 
 def save_inverter_samples(conn: sqlite3.Connection, device_sn: str,
                           samples: list[InverterSample]) -> None:
+    """Same descending-insert page-split problem as `save_channel_samples`
+    (see there): `inverter_samples` is WITHOUT ROWID with PK (device_sn,
+    sampled_at), so sort ascending by `sampled_at` before the executemany."""
+    ordered = sorted(samples, key=lambda s: s.sampled_at)
     sets = ", ".join(f"{c}=excluded.{c}" for c in _INV_COLS)
     cols = ", ".join(_INV_COLS)
     marks = ",".join("?" * (3 + len(_INV_COLS)))
@@ -68,7 +80,7 @@ def save_inverter_samples(conn: sqlite3.Connection, device_sn: str,
         f"VALUES ({marks}) "
         f"ON CONFLICT(device_sn, sampled_at) DO UPDATE SET {sets}",
         [(device_sn, s.sampled_at, s.day, *(getattr(s, c) for c in _INV_COLS))
-         for s in samples])
+         for s in ordered])
 
 
 def load_channels(conn: sqlite3.Connection, device_sn: str) -> list[dict]:

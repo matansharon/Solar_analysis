@@ -103,6 +103,44 @@ def test_save_inverter_samples_is_idempotent_and_keeps_flags():
     assert rows[0]["str_unbalance"] == "0"
 
 
+def test_save_channel_samples_round_trips_descending_input_ascending():
+    # The collector concatenates pages newest-first, so a descending list is
+    # the real-world input shape; regression risk is in the sort/rebuild, not
+    # in the physical page-fill benefit (that's measured, not unit-tested).
+    conn = _conn()
+    s = [ChannelSample("2026-07-25 12:10:00", "2026-07-25", "mppt", 1,
+                       120.0, 400.0, 3.0),
+         ChannelSample("2026-07-25 12:10:00", "2026-07-25", "string", 2,
+                       None, 401.0, 4.0),
+         ChannelSample("2026-07-25 12:05:00", "2026-07-25", "mppt", 1,
+                       110.0, 399.0, 2.5),
+         ChannelSample("2026-07-25 12:00:00", "2026-07-25", "mppt", 1,
+                       100.0, 398.0, 2.0)]
+    store.save_channel_samples(conn, "SN-A", s)
+    rows = store.load_channel_samples(conn, "SN-A", "2026-07-25")
+    assert len(rows) == 4
+    mppt = [r for r in rows if r["channel_kind"] == "mppt"]
+    assert [r["sampled_at"] for r in mppt] == [
+        "2026-07-25 12:00:00", "2026-07-25 12:05:00", "2026-07-25 12:10:00"]
+    assert [r["power_w"] for r in mppt] == [100.0, 110.0, 120.0]
+    assert [r["current_a"] for r in mppt] == [2.0, 2.5, 3.0]
+    string = next(r for r in rows if r["channel_kind"] == "string")
+    assert string["voltage_v"] == 401.0 and string["power_w"] is None
+
+
+def test_save_inverter_samples_round_trips_descending_input_ascending():
+    conn = _conn()
+    s = [InverterSample("2026-07-25 12:10:00", "2026-07-25", pac_w=300.0),
+         InverterSample("2026-07-25 12:05:00", "2026-07-25", pac_w=200.0),
+         InverterSample("2026-07-25 12:00:00", "2026-07-25", pac_w=100.0)]
+    store.save_inverter_samples(conn, "SN-A", s)
+    rows = store.load_inverter_samples(conn, "SN-A", "2026-07-25")
+    assert len(rows) == 3
+    assert [r["sampled_at"] for r in rows] == [
+        "2026-07-25 12:00:00", "2026-07-25 12:05:00", "2026-07-25 12:10:00"]
+    assert [r["pac_w"] for r in rows] == [100.0, 200.0, 300.0]
+
+
 def test_save_helpers_tolerate_empty_input():
     conn = _conn()
     store.save_channels(conn, "SN-A", "uid", [], now="n")
