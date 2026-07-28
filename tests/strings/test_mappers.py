@@ -66,6 +66,21 @@ def test_text_preserves_the_raw_token():
     assert m._text(None) is None
 
 
+def test_lifetime_kwh_takes_the_max_not_the_first_row():
+    # First entry carries a LOWER value than a later one; a naive
+    # first-non-None lookup would wrongly return 100.0.
+    rows = [{"epv1Total": 100.0}, {"epv1Total": 150.0}, {"epv1Total": 250.0}]
+    assert m._lifetime_kwh(rows, 1) == 250.0
+
+
+def test_lifetime_kwh_none_when_key_absent_from_every_row():
+    assert m._lifetime_kwh([{"epv2Total": 5.0}, {}], 1) is None
+
+
+def test_lifetime_kwh_zero_when_present_but_zero():
+    assert m._lifetime_kwh([{"epv1Total": 0.0}, {"epv1Total": 0.0}], 1) == 0.0
+
+
 def test_channel_inventory_finds_six_live_mppt_inputs():
     chans = m.channel_inventory(history_rows())
     mppt = [c for c in chans if c.kind == "mppt"]
@@ -77,6 +92,18 @@ def test_channel_inventory_finds_six_live_mppt_inputs():
     # group_voltage comes from the daylight (peak) row, not the night rows
     assert by_no[1].group_voltage == 409.0
     assert by_no[6].group_voltage == 412.30002
+
+
+def test_channel_inventory_lifetime_kwh_is_the_days_max():
+    # The fixture's three rows all carry the same epv1Total; skew them so the
+    # FIRST row (newest, arrives first) is lower than a LATER row, proving
+    # the stored lifetime_kwh is the max across the day, not row order.
+    rows = [dict(r) for r in history_rows()]
+    rows[0]["epv1Total"] = 100.0        # 23:57 row, first in the list
+    rows[2]["epv1Total"] = 2000.0       # 00:02:56 row, last in the list
+    chans = m.channel_inventory(rows)
+    mppt1 = next(c for c in chans if c.kind == "mppt" and c.no == 1)
+    assert mppt1.lifetime_kwh == 2000.0
 
 
 def test_channel_inventory_excludes_never_produced_inputs():

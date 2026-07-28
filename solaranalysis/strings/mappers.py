@@ -106,6 +106,25 @@ def best_row(rows: list[dict]) -> dict:
     return best
 
 
+def _lifetime_kwh(rows: list[dict], n: int) -> float | None:
+    """The MAXIMUM non-None `epv{n}Total` across the day's rows -- a lifetime
+    counter only ever climbs, so the max is the day's true value regardless of
+    row order. Rows arrive newest-first from the collector, but the fixture
+    and live payloads aren't guaranteed strictly chronological, so taking the
+    FIRST non-None value (the old behaviour) could land on any row's reading
+    rather than the true maximum.
+
+    Returns None when the key is absent from every row, 0.0 when present but
+    the input has never produced -- callers treat both as "falsy" to skip.
+    """
+    best = None
+    for r in rows:
+        v = _num(r.get(f"epv{n}Total"))
+        if v is not None and (best is None or v > best):
+            best = v
+    return best
+
+
 def channel_inventory(rows: list[dict]) -> list[ChannelInfo]:
     """Which channels are live, from a day's sample rows.
 
@@ -126,11 +145,7 @@ def channel_inventory(rows: list[dict]) -> list[ChannelInfo]:
     out: list[ChannelInfo] = []
 
     for n in range(1, MPPT_MAX + 1):
-        lifetime = None
-        for r in rows:                      # any row carries the lifetime counter
-            lifetime = _num(r.get(f"epv{n}Total"))
-            if lifetime is not None:
-                break
+        lifetime = _lifetime_kwh(rows, n)
         if not lifetime:                    # None or 0.0 -> never produced
             continue
         out.append(ChannelInfo(kind="mppt", no=n,
@@ -173,8 +188,7 @@ def map_day_energy(rows: list[dict]) -> list[ChannelDayEnergy]:
 
     out: list[ChannelDayEnergy] = []
     for n in range(1, MPPT_MAX + 1):
-        lifetime = next((v for v in (_num(r.get(f"epv{n}Total")) for r in rows)
-                         if v is not None), None)
+        lifetime = _lifetime_kwh(rows, n)
         if not lifetime:
             continue
 
