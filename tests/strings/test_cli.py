@@ -71,3 +71,30 @@ def test_main_exits_2_without_an_enabled_growatt_plant(tmp_path, capsys):
                    "--app-dir", str(tmp_path / "app")])
     assert rc == 2
     assert "growatt" in capsys.readouterr().out.lower()
+
+
+def test_exit_code_all_success_is_zero():
+    assert cli.exit_code([{"day": "d1"}, {"day": "d2"}]) == 0
+
+
+def test_exit_code_one_error_among_successes_is_four():
+    assert cli.exit_code([{"day": "d1"}, {"day": "d2", "error": "boom"}]) == 4
+
+
+def test_exit_code_all_errors_is_four():
+    assert cli.exit_code(
+        [{"day": "d1", "error": "x"}, {"day": "d2", "error": "y"}]) == 4
+
+
+def test_exit_code_all_empty_is_zero():
+    assert cli.exit_code(
+        [{"day": "d1", "empty": True}, {"day": "d2", "empty": True}]) == 0
+
+
+def test_exit_code_empty_mix_with_one_error_is_four():
+    assert cli.exit_code(
+        [{"day": "d1", "empty": True}, {"day": "d2", "error": "boom"}]) == 4
+
+
+def test_exit_code_empty_list_is_zero():
+    assert cli.exit_code([]) == 0

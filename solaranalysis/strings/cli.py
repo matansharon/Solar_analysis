@@ -46,6 +46,13 @@ def first_plant_id(plants) -> str | None:
     return None
 
 
+def exit_code(results: list[dict]) -> int:
+    """4 if any day in the flat per-day result list carries an `"error"` key,
+    else 0. An `"empty"` day (pre-install or out-of-range) is not a failure --
+    only an actual error should tell a Scheduled Task the run failed."""
+    return 4 if any("error" in r for r in results) else 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="solaranalysis.strings")
     ap.add_argument("--data-dir", required=True)
@@ -114,5 +121,10 @@ def main(argv=None, today=None) -> int:
                 print(f"{inv.serial} {r['day']}: {r['channels']} channels, "
                       f"{r['energy_rows']} energy rows, {r['samples']} samples, "
                       f"{r['pages_ok']}/{collector.PAGES_PER_DAY} pages{flag}")
+
+    flat_results = [r for _, results in all_results for r in results]
+    failed = sum(1 for r in flat_results if "error" in r)
+    if failed:
+        print(f"{failed} of {len(flat_results)} day(s) failed")
     conn.close()
-    return 0
+    return exit_code(flat_results)
