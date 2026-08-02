@@ -149,3 +149,112 @@ def test_save_helpers_tolerate_empty_input():
     store.save_inverter_samples(conn, "SN-A", [])
     assert store.load_channels(conn, "SN-A") == []
     assert store.load_channel_samples(conn, "SN-A", "2026-07-25") == []
+
+
+# --- derived series for the analyzer -------------------------------------
+
+def _seed_window(conn, sn="SN-A"):
+    """Two days, two string pairs, one MPPT input, with the inverter at full
+    power for one sample and at 10% for another. Only the full-power sample
+    should reach the pair-imbalance loader."""
+    for day, hot_i2 in (("2026-07-26", 8.0), ("2026-07-27", 6.0)):
+        store.save_inverter_samples(conn, sn, [
+            InverterSample(sampled_at=f"{day} 12:00:00", day=day, pac_w=40000.0,
+                           status="1", temp_c=40.0, temp3_c=60.0,
+                           pv_iso_kohm=500.0),
+            InverterSample(sampled_at=f"{day} 18:00:00", day=day, pac_w=4000.0,
+                           status="1", temp_c=45.0, temp3_c=70.0,
+                           pv_iso_kohm=65530.0),
+            InverterSample(sampled_at=f"{day} 23:00:00", day=day, pac_w=0.0,
+                           status="0", temp_c=99.0, temp3_c=99.0,
+                           str_break="1", pv_iso_kohm=65530.0),
+        ])
+        rows = []
+        for ts, i2 in ((f"{day} 12:00:00", hot_i2), (f"{day} 18:00:00", 1.0)):
+            rows += [ChannelSample(sampled_at=ts, day=day, kind="string", no=1,
+                                   voltage_v=400.0, current_a=10.0),
+                     ChannelSample(sampled_at=ts, day=day, kind="string", no=2,
+                                   voltage_v=400.0, current_a=i2),
+                     ChannelSample(sampled_at=ts, day=day, kind="mppt", no=1,
+                                   voltage_v=400.0, current_a=18.0,
+                                   power_w=7000.0)]
+        store.save_channel_samples(conn, sn, rows)
+    conn.commit()
+
+
+def test_load_peak_string_samples_keeps_only_high_power_instants():
+    conn = _conn()
+    _seed_window(conn)
+    rows = store.load_peak_string_samples(conn, "SN-A", "2026-07-26", 0.5)
+    assert {r["sampled_at"] for r in rows} == {"2026-07-26 12:00:00",
+                                               "2026-07-27 12:00:00"}
+    # MPPT rows are not strings and must not come along
+    assert {r["channel_no"] for r in rows} == {1, 2}
+    assert all(r["voltage_v"] == 400.0 for r in rows)
+
+
+def test_load_peak_string_samples_honours_the_since_day():
+    conn = _conn()
+    _seed_window(conn)
+    rows = store.load_peak_string_samples(conn, "SN-A", "2026-07-27", 0.5)
+    assert {r["day"] for r in rows} == {"2026-07-27"}
+
+
+def test_load_peak_string_samples_threshold_is_per_day_not_global():
+    """Each day's cutoff comes from that day's own peak, so a dull day still
+    contributes its own best hours."""
+    conn = _conn()
+    _seed_window(conn)
+    conn.execute("UPDATE inverter_samples SET pac_w = pac_w/10.0 "
+                 "WHERE day='2026-07-27'")
+    conn.commit()
+    rows = store.load_peak_string_samples(conn, "SN-A", "2026-07-26", 0.5)
+    assert "2026-07-27 12:00:00" in {r["sampled_at"] for r in rows}
+
+
+def test_load_hourly_channel_power_aggregates_mppt_only():
+    conn = _conn()
+    _seed_window(conn)
+    rows = store.load_hourly_channel_power(conn, "SN-A", "2026-07-26")
+    assert all(r["channel_no"] == 1 for r in rows)
+    by = {(r["day"], r["hour"]): r["power_w"] for r in rows}
+    assert by[("2026-07-26", 12)] == 7000.0
+    assert by[("2026-07-26", 18)] == 7000.0
+    assert 23 not in {r["hour"] for r in rows}      # no MPPT sample at 23:00
+
+
+def test_load_inverter_day_health_counts_flags_over_the_whole_day():
+    conn = _conn()
+    _seed_window(conn)
+    rows = {r["day"]: r for r in
+            store.load_inverter_day_health(conn, "SN-A", "2026-07-26")}
+    # the 23:00 sample is status='0' but its fault still counts
+    assert rows["2026-07-26"]["n_str_break"] == 1
+    assert rows["2026-07-26"]["n_warn_code"] == 0
+
+
+def test_load_inverter_day_health_takes_temps_from_producing_samples_only():
+    conn = _conn()
+    _seed_window(conn)
+    rows = {r["day"]: r for r in
+            store.load_inverter_day_health(conn, "SN-A", "2026-07-26")}
+    # the 99.0 C reading at 23:00 is status='0' and must not become the max
+    assert rows["2026-07-26"]["temp3_c"] == 70.0
+    assert rows["2026-07-26"]["temp_c"] == 45.0
+
+
+def test_load_inverter_day_health_does_not_expose_the_absent_temp4_sensor():
+    conn = _conn()
+    _seed_window(conn)
+    row = store.load_inverter_day_health(conn, "SN-A", "2026-07-26")[0]
+    assert "temp4_c" not in row
+
+
+def test_load_inverter_day_health_treats_a_missing_flag_as_no_fault():
+    """The mapper stores NULL for a field the payload omitted. SUM over NULLs
+    is NULL in SQLite, which would surface as an unreadable finding."""
+    conn = _conn()
+    _seed_window(conn)
+    for row in store.load_inverter_day_health(conn, "SN-A", "2026-07-26"):
+        assert row["n_warn_code"] == 0
+        assert row["n_fault_code1"] == 0

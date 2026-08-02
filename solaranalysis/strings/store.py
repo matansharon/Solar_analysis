@@ -115,3 +115,83 @@ def load_inverter_samples(conn: sqlite3.Connection, device_sn: str,
     return [dict(r) for r in conn.execute(
         "SELECT * FROM inverter_samples WHERE device_sn=? AND day=? "
         "ORDER BY sampled_at", (device_sn, day))]
+
+
+# --- derived series for the analyzer -------------------------------------
+# The analyzer is pure and DB-free, so the three loaders below do the heavy
+# aggregation in SQL and hand back small row lists. They are deliberately not
+# stored as columns: `channel_samples` already holds everything they derive,
+# so materializing them would be a schema migration buying nothing until the
+# sample-retention prune lands (see NextTODO).
+
+def load_peak_string_samples(conn: sqlite3.Connection, device_sn: str,
+                             since_day: str, power_frac: float) -> list[dict]:
+    """Individual-string samples taken while the inverter was at >= `power_frac`
+    of that day's own peak AC power, for every day on/after `since_day`.
+
+    Restricting to the high-power part of the day is what makes the pair
+    imbalance metric stable -- measured at a single peak instant the metric's
+    per-pair spread is 5.54pp, across this window it is 1.93pp (see the
+    2026-08-02 C2 calibration). Voltage comes along because pairs are grouped
+    on it; `inverter_channels.group_voltage` is a last-write-wins snapshot and
+    must not be used for history."""
+    return [dict(r) for r in conn.execute(
+        "WITH peak AS ("
+        "  SELECT day, MAX(pac_w) AS pk FROM inverter_samples"
+        "   WHERE device_sn=:sn AND day>=:since GROUP BY day),"
+        " hot AS ("
+        "  SELECT i.sampled_at FROM inverter_samples i JOIN peak p ON i.day=p.day"
+        "   WHERE i.device_sn=:sn AND i.day>=:since AND p.pk>0"
+        "     AND i.pac_w >= :frac * p.pk) "
+        "SELECT c.day, c.sampled_at, c.channel_no, c.voltage_v, c.current_a "
+        "  FROM channel_samples c JOIN hot h ON c.sampled_at=h.sampled_at "
+        " WHERE c.device_sn=:sn AND c.day>=:since AND c.channel_kind='string' "
+        " ORDER BY c.day, c.sampled_at, c.channel_no",
+        {"sn": device_sn, "since": since_day, "frac": power_frac})]
+
+
+def load_hourly_channel_power(conn: sqlite3.Connection, device_sn: str,
+                              since_day: str) -> list[dict]:
+    """Per day, per clock hour, per MPPT input: summed DC power.
+
+    Aggregated in SQL -- a 30-day window is ~155k sample rows but only ~4k
+    aggregated ones. The analyzer turns these into per-hour shares."""
+    return [dict(r) for r in conn.execute(
+        "SELECT day, CAST(substr(sampled_at, 12, 2) AS INTEGER) AS hour, "
+        "       channel_no, SUM(power_w) AS power_w "
+        "  FROM channel_samples "
+        " WHERE device_sn=? AND day>=? AND channel_kind='mppt' "
+        " GROUP BY day, hour, channel_no ORDER BY day, hour, channel_no",
+        (device_sn, since_day))]
+
+
+def load_inverter_day_health(conn: sqlite3.Connection, device_sn: str,
+                             since_day: str) -> list[dict]:
+    """Per day: how many samples carried each non-zero fault/status flag, and
+    the daily max of each real temperature sensor.
+
+    Fault counts span the whole day -- a fault at any hour matters. Temperature
+    maxima are taken over `status='1'` samples only: that is the portal's own
+    producing flag, and it is also the filter that perfectly excludes the
+    65,530 kOhm sentinel (0 of 3,032 producing samples carry it). `temp4_c` is
+    omitted on purpose -- it is constant 0.0 on this hardware, the sensor is
+    absent, and a naive outlier rule would flag it as cold forever."""
+    return [dict(r) for r in conn.execute(
+        # COALESCE, because a flag the payload omitted is stored NULL and
+        # `SUM(NULL <> '0')` is NULL, not 0 -- absence of a reading is not a
+        # fault, and must not read as one.
+        "SELECT day, "
+        "  SUM(COALESCE(str_break,    '0') <> '0') AS n_str_break, "
+        "  SUM(COALESCE(str_unbalance,'0') <> '0') AS n_str_unbalance, "
+        "  SUM(COALESCE(str_unmatch,  '0') <> '0') AS n_str_unmatch, "
+        "  SUM(COALESCE(warn_code,    '0') <> '0') AS n_warn_code, "
+        "  SUM(COALESCE(fault_code1,  '0') <> '0') AS n_fault_code1, "
+        "  SUM(COALESCE(fault_code2,  '0') <> '0') AS n_fault_code2, "
+        "  SUM(COALESCE(fault_type,   '0') <> '0') AS n_fault_type, "
+        "  SUM(COALESCE(derating_mode,'0') <> '0') AS n_derating_mode, "
+        "  MAX(CASE WHEN status='1' THEN temp_c  END) AS temp_c, "
+        "  MAX(CASE WHEN status='1' THEN temp2_c END) AS temp2_c, "
+        "  MAX(CASE WHEN status='1' THEN temp3_c END) AS temp3_c, "
+        "  MAX(CASE WHEN status='1' THEN temp5_c END) AS temp5_c "
+        "  FROM inverter_samples WHERE device_sn=? AND day>=? "
+        " GROUP BY day ORDER BY day", (device_sn, since_day))]
