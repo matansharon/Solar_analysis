@@ -5,7 +5,7 @@
 ## Deploy status
 - Target: windows — llmadmin (192.168.30.84), NSSM service `SolarAnalysis`, port 8010 *(both proposed in `.deploy.yml` — confirm free on the server before first deploy)*
 - State: NOT deployed (pending) · plan: `DEPLOYMENT.md` (first-time path, FastAPI/uvicorn — **not** Waitress)
-- C1's commits **were pushed** — as of 2026-08-02 `master` == `origin/master` at `c44f7a5`, so the earlier "24 commits ahead" warning is resolved. **This session's C2 work is uncommitted.** `DEPLOYMENT.md` step 2 pulls from origin, so commit and push before deploying.
+- **Everything through Phase C2 is committed and pushed** — as of 2026-08-02 `master` == `origin/master` at `da2b405` (C2 landed as eight commits on top of C1's `c44f7a5`). `DEPLOYMENT.md` step 2 pulls from origin, so re-check `git log origin/master..master` is empty before deploying, but there is nothing outstanding today.
 - The deploy is **hands-on-server work**: llmadmin answers on SMB/WinRM but this dev machine has no usable remote-exec path (WinRM needs a TrustedHosts change + elevation; RPC to the service manager is denied). Every `DEPLOYMENT.md` command has to be run in PowerShell on the server itself — including `nssm status SolarAnalysis`, so "not deployed" is an assumption that has never been verified from here.
 
 ## Done this session (2026-08-02) — Phase C2: string analysis + report + email
