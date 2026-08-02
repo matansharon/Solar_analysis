@@ -199,23 +199,31 @@ skipped — a tables-only email is expected, not a failure.
 
 Like the optimizer collector, this is a **separate process** with its own entry
 point. It collects per-MPPT-input daily energy plus the full 5-minute
-per-channel series for the Growatt inverter. **In this phase (C1) it does not
-email anything** — analysis and the anomaly report are Phase C2. Until then the
-task's only success signal is its exit code, so the verify below matters more
-than it does for §11.
+per-channel series for the Growatt inverter, then **analyzes the accumulated
+series and emails an anomaly report** (Phase C2).
 
-**This code must be on the server first.** `master` was 22 commits ahead of
-`origin/master` when C1 merged — step 2 pulls from origin, so **push before
-deploying** or the server will not have `solaranalysis/strings/` at all.
+**This code must be on the server first.** Step 2 pulls from origin, so confirm
+`git log origin/master..master` is empty before deploying — otherwise the server
+will not have `solaranalysis/strings/` at all.
 
 **Do step 10 first.** Credentials come from the enabled Growatt plant's stored
 row in `app.db`, which only exists once the plant is added through the web UI.
 Run before that and it exits **2** (`no enabled Growatt plant configured in
 app.db`).
 
-Exit codes: **0** clean · **2** no enabled Growatt plant · **3** the plant or
-device list came back empty (almost always a failed/unauthorized fetch, not a
-genuinely deviceless plant) · **4** one or more days failed to collect.
+Exit codes are unchanged by C2: **0** clean · **2** no enabled Growatt plant ·
+**3** the plant or device list came back empty (almost always a failed or
+unauthorized fetch, not a genuinely deviceless plant) · **4** one or more days
+failed to collect. **Analysis and email failures deliberately do not change the
+exit code** — they print `narrative skipped:` or `email failed:` and the run
+still reports on the collection, which is the part worth retrying. As with §11,
+**a 0 exit code does not by itself mean mail went out**; check the final line.
+
+**Recipients:** `STRING_RECIPIENTS` in `.env` if set (comma-separated),
+otherwise the app's configured `REPORT_RECIPIENTS`. It is independent of
+`OPTIMIZER_RECIPIENTS` — the two reports can go to different people. Pass
+`--no-email` to collect and analyze without sending, which is the right flag for
+the first manual run.
 
 First a dry run for a single day:
 
@@ -224,14 +232,16 @@ cd C:\apps\solar-analysis
 $env:PYTHONIOENCODING = "utf-8"
 .\.venv\Scripts\python.exe -m solaranalysis.strings `
   --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
-  --backfill 1
+  --backfill 1 --no-email
 ```
 **Verify:** one line per day reading
-`<serial> <date>: 18 channels, 6 energy rows, ~5184 samples, 4/4 pages`, and
-exit code 0. **`18 channels` and `4/4 pages` are the two numbers that confirm
-the whole chain** — 6 MPPT inputs plus 12 individual strings, and all four pages
-of the day walked. A `PARTIAL` suffix means pages 1–3 failed; the day's energy
-still landed but its intraday series is incomplete.
+`<serial> <date>: 18 channels, 6 energy rows, ~5184 samples, 4/4 pages`, then
+`analysis complete: N finding(s) (email skipped)`, and exit code 0.
+**`18 channels` and `4/4 pages` are the two numbers that confirm the whole
+chain** — 6 MPPT inputs plus 12 individual strings, and all four pages of the
+day walked. A `PARTIAL` suffix means pages 1–3 failed; the day's energy still
+landed but its intraday series is incomplete, and the analyzer will report the
+day as incomplete rather than judging it.
 
 Then backfill the available history:
 
@@ -265,19 +275,46 @@ Set-ScheduledTask -TaskName "SolarAnalysis-Strings" -Settings $settings
 ```
 
 Set `PYTHONIOENCODING=utf-8` for the task as well — the CLI prints a Unicode em
-dash, and Phase C2 adds Hebrew report output. Either add it as a machine-scope
-environment variable or wrap the call in a one-line `.cmd`; without it the
-progress line renders as a mangled glyph (harmless today, but it will matter
-once C2 emails Hebrew).
+dash and the report subject line contains `·`, and with `output_language: he`
+the narrative itself is Hebrew. Either add it as a machine-scope environment
+variable or wrap the call in a one-line `.cmd`; without it the run can die on a
+`UnicodeEncodeError` when it prints, which would look like a collection failure.
+
+**The rules need history, and say so rather than guessing.** Every threshold
+compares a channel against its own trailing median and needs
+`MIN_HISTORY_DAYS = 7` usable days (14 for the degradation rule); below that a
+rule is **skipped, not fired**. So run the 90-day backfill *before* enabling the
+schedule — on a database with no history the first week of reports will be
+all-clear by construction, which is correct but uninformative. Days captured
+incompletely (under 600 producing minutes) are excluded from every history
+comparison and reported as `day incomplete` instead of being judged.
 
 **Verify:** `Start-ScheduledTask -TaskName "SolarAnalysis-Strings"`, then
 `(Get-ScheduledTaskInfo "SolarAnalysis-Strings").LastTaskResult` → `0`. A `4`
-means at least one day failed — re-run that date manually. Confirm the data
-landed:
+means at least one day failed — re-run that date manually. Confirm the report
+arrived, and that its findings read as **channel-relative** (`PV3 … below its
+own median`, `strings 9+10 … off this pair's own median`) — an absolute-sounding
+finding would mean the wrong analyzer is deployed. Confirm the data landed:
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from solaranalysis.web import db; c=db.connect(r'C:\apps\solar-analysis\data\app.db'); print('days', c.execute('SELECT COUNT(DISTINCT day) FROM channel_day_energy').fetchone()[0]); print('channels', c.execute('SELECT COUNT(*) FROM inverter_channels').fetchone()[0]); print('samples', c.execute('SELECT COUNT(*) FROM channel_samples').fetchone()[0])"
 ```
+
+**Reading the report.** Findings are worst-first: `dead` (a channel stopped
+reporting or produced nothing) → `fault` (the inverter's own
+`StrBreak`/`StrUnblance`/`StrUnmatch`/fault codes — authoritative, no threshold
+involved) → `underperforming` → `imbalance` (one string of a parallel pair) →
+`degrading` → `watch` (intraday shading/soiling, temperature).
+
+The one thing an operator must know: **the six MPPT inputs are not peers and the
+six string pairs are not peers.** PV1–3 each carry ~0.195 of plant DC energy
+against PV4–6's ~0.135 because PV4–6 are physically smaller arrays, and pair
+3+4 sits permanently at ~24% current imbalance while pair 5+6 sits at ~14%.
+None of that is a fault. Every rule therefore compares a channel only against
+its *own* history, and the report states each finding's own baseline next to the
+measured value so the comparison is visible. Thresholds and the measurements
+behind them are in
+`docs/superpowers/plans/2026-08-02-growatt-string-c2-calibration.md`.
 
 **Disk:** this table grows about **0.73 MB/day** (~260 MB/year) unpruned, in the
 same `app.db` as the web app's data. Survivable for a single plant, but the DB
