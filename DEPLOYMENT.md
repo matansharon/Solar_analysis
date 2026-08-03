@@ -86,12 +86,14 @@ Confirm the port is free: `Test-NetConnection localhost -Port 8010` should
 **fail** to connect before deploy.
 **Verify:** both files exist; `.env` has all six keys.
 
-### 6. App data / first login
-The app creates `data\app.db` and `data\secret.key` on first start; there is no
-seed user — the web UI's setup screen sets the login password, and plant
-credentials (SolarEdge / Growatt / SMA) are entered through the UI (stored
-encrypted with `data\secret.key`).
-**Verify:** after step 7's smoke test, `data\app.db` exists and login works.
+### 6. App data
+The app creates `data\app.db` and `data\secret.key` on first start. **There is
+no login** — the UI opens straight to the dashboard, so anyone who can reach
+port 8010 on the internal network has full access. Plant credentials
+(SolarEdge / Growatt / SMA) are entered through the UI and stored encrypted with
+`data\secret.key`; back that file up and keep the firewall rule in step 9 scoped
+to the internal network.
+**Verify:** after step 7's smoke test, `data\app.db` and `data\secret.key` exist.
 
 ### 7. Smoke test (foreground)
 ```powershell
@@ -101,7 +103,8 @@ cd C:\apps\solar-analysis
 Invoke-WebRequest http://localhost:8010/ | Select-Object StatusCode   # -> 200
 ```
 There is **no `/api/health`** — root `/` (the SPA) is the health check.
-**Verify:** 200 on `/`; setup/login screen renders in a browser. Ctrl+C to stop.
+**Verify:** 200 on `/`; the dashboard renders in a browser with no login prompt.
+Ctrl+C to stop.
 
 ### 8. Register the NSSM service
 ```powershell
@@ -128,8 +131,9 @@ New-NetFirewallRule -DisplayName "solar-analysis 8010" -Direction Inbound `
 **Verify:** from a workstation, `http://192.168.30.84:8010/` loads.
 
 ### 10. Acceptance
-From a workstation open `http://192.168.30.84:8010`: complete setup/login, add
-the three vendor plants, trigger a **manual snapshot run**, and confirm:
+From a workstation open `http://192.168.30.84:8010`: the dashboard loads with no
+login, add the three vendor plants, trigger a **manual snapshot run**, and
+confirm:
 - the run completes in the UI (report + dashboard written), and
 - the dashboard email arrives at the `REPORT_RECIPIENTS` address.
 
@@ -374,6 +378,7 @@ credentials undecryptable.
 ## Security checklist
 - [ ] `.env` and `data\` are gitignored, never committed.
 - [ ] Runs via `python -m solaranalysis.web` under NSSM (uvicorn, no reload) — not `run_dev.bat`.
-- [ ] A real login password was set at first run (app's own auth; no seed users).
+- [ ] Understood that the app has **no authentication** — reaching port 8010 is
+      full access. The firewall rule is the only access control.
 - [ ] Firewall exposes 8010 to the internal network only.
 - [ ] `data\secret.key` + `data\app.db` are included in server backups.

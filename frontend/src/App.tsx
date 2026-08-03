@@ -1,8 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider, useAuth } from "./auth";
 import { Nav } from "./nav";
-import LoginOrSetup from "./routes/LoginOrSetup";
 import Dashboard from "./routes/Dashboard";
 import Plants from "./routes/Plants";
 import PlantDetail from "./routes/PlantDetail";
@@ -14,10 +12,6 @@ import Settings from "./routes/Settings";
 const qc = new QueryClient();
 
 function Shell() {
-  const { authenticated } = useAuth();
-  if (!authenticated) {
-    return <LoginOrSetup />;
-  }
   return (
     <div className="app-shell">
       <Nav />
@@ -40,9 +34,7 @@ function Shell() {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <BrowserRouter><Shell /></BrowserRouter>
-      </AuthProvider>
+      <BrowserRouter><Shell /></BrowserRouter>
     </QueryClientProvider>
   );
 }

@@ -1,11 +1,10 @@
-import hashlib
 from fastapi.testclient import TestClient
 from solaranalysis.core import measurements
 from solaranalysis.core.schema import (
     PlantData, TimeRange, Device, DeviceStatus, Alert, AlertSeverity,
     PowerPoint, EnergyPoint,
 )
-from solaranalysis.web import db, repo
+from solaranalysis.web import db
 from solaranalysis.web.app import create_app
 from solaranalysis.web.paths import Paths
 
@@ -16,11 +15,9 @@ def _client(tmp_path):
     app_dir = tmp_path / "app"; app_dir.mkdir()
     paths = Paths.create(str(tmp_path / "data"), str(app_dir))
     conn = db.connect(paths.db_path); db.init_db(conn)
-    repo.set_setup_token_hash(conn, hashlib.sha256(b"t").hexdigest())
     conn.close()
     app = create_app(paths)
     client = TestClient(app)
-    client.post("/api/auth/setup", json={"token": "t", "password": "pw"}, headers=CSRF)
     return client, paths
 
 

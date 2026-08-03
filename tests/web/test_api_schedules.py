@@ -1,6 +1,5 @@
-import hashlib
 from fastapi.testclient import TestClient
-from solaranalysis.web import db, repo
+from solaranalysis.web import db
 from solaranalysis.web.app import create_app
 from solaranalysis.web.paths import Paths
 
@@ -17,11 +16,9 @@ def _client(tmp_path, sched=None):
     app_dir = tmp_path / "app"; app_dir.mkdir()
     paths = Paths.create(str(tmp_path / "data"), str(app_dir))
     conn = db.connect(paths.db_path); db.init_db(conn)
-    repo.set_setup_token_hash(conn, hashlib.sha256(b"t").hexdigest())
     conn.close()
     app = create_app(paths, schedule_service=sched)
     client = TestClient(app)
-    client.post("/api/auth/setup", json={"token": "t", "password": "pw"}, headers=CSRF)
     return client
 
 

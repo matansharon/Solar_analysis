@@ -141,21 +141,6 @@ button { font-family: inherit; }
   background: linear-gradient(90deg, rgba(232, 161, 60, 0.10), transparent);
 }
 
-.app-nav__logout {
-  margin: 12px 20px 0;
-  padding: 8px 12px;
-  background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-.app-nav__logout:hover { border-color: var(--red); color: var(--red); }
-
 .app-main {
   flex: 1;
   min-width: 0;

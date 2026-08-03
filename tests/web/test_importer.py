@@ -64,7 +64,6 @@ def test_import_config_reports_duplicate_names(tmp_path):
     assert repo.list_plants(c) == []  # no partial writes
 
 
-import hashlib
 from fastapi.testclient import TestClient
 from solaranalysis.web.app import create_app
 from solaranalysis.web.paths import Paths
@@ -78,10 +77,8 @@ def _client_with_app(tmp_path):
     paths = Paths.create(str(tmp_path / "data"), str(app_dir))
     conn = db.connect(paths.db_path)
     db.init_db(conn)
-    repo.set_setup_token_hash(conn, hashlib.sha256(b"t").hexdigest())
     conn.close()
     client = TestClient(create_app(paths))
-    client.post("/api/auth/setup", json={"token": "t", "password": "pw"}, headers=_CSRF)
     return client, paths
 
 

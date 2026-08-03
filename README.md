@@ -241,28 +241,26 @@ activate the virtualenv first. Both forms accept the same arguments.
   existing `config.yaml` (for one-time import, see below) and `.env` (for
   `ANTHROPIC_API_KEY`).
 
-Open `http://<host>:<port>/` in a browser once the server is running.
+Open `http://<host>:<port>/` in a browser once the server is running. There is
+no login — the dashboard loads immediately.
 
-### First boot: the setup token
+### No authentication
 
-On first start (no app password set yet), the server generates a random setup
-token and **prints it to the console/log**, e.g.:
+The app has no login, no app password, and no user accounts: anyone who can
+reach the port has full access, including starting runs, editing plants, and
+reading reports. Bind it only to networks you trust, and treat `--host
+0.0.0.0` as "everyone on this LAN is an admin".
 
+The one guard that remains is a required `X-Solar-CSRF` header on every
+`POST`/`PUT`/`DELETE` to `/api/*`. It exists so a web page loaded in someone's
+browser can't quietly issue writes against the server: a custom header forces a
+CORS preflight, which fails. Any deliberate API client (curl, scripts) just
+sends the header:
+
+```bash
+curl -X POST http://localhost:8000/api/runs -H "X-Solar-CSRF: 1" \
+  -H "Content-Type: application/json" -d '{"time_range":"snapshot"}'
 ```
-SETUP TOKEN (enter in the web setup screen): 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d
-```
-
-The web UI shows a setup screen until a password is created. Copy the token
-from the server log into that screen along with your chosen app password —
-this closes the window where another client on the same network could
-otherwise claim the app first. The token is single-use: once a password
-exists, `POST /api/auth/setup` always returns 409 and the token no longer
-matters.
-
-If you're running the server as a background/Windows service rather than in
-an interactive terminal, see
-`docs/superpowers/plans/notes-web-ui-deploy.md` for where to find this token
-in the service's log file.
 
 ### Credential threat model
 
@@ -276,15 +274,11 @@ casual exposure (e.g. a backup or DB copy without the key) rather than
 against an attacker who already has filesystem access to the data directory.
 Back up and restrict `<data-dir>` accordingly.
 
-The app password itself is hashed (PBKDF2-HMAC-SHA256, 600k iterations, random
-per-install salt) — it is never stored or transmitted in plaintext after
-setup. The API never returns stored secret values; plant responses only ever
-include `has_password`/`has_token` booleans.
-
-**Changing the app password logs everyone out.** `PUT /api/auth/password`
-rotates the session epoch, which immediately invalidates every previously
-issued session cookie (yours included) — you'll need to log in again with the
-new password.
+The API never returns stored secret values; plant responses only ever include
+`has_password`/`has_token` booleans. Note that the app itself is
+unauthenticated (see above), so this only stops credentials leaking through the
+API — it does not stop anyone who can reach the port from *using* them to
+trigger runs.
 
 ### Importing an existing `config.yaml`
 

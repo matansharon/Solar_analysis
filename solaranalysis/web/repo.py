@@ -36,43 +36,6 @@ def set_app_settings(conn, model, max_input_tokens, output_language) -> None:
     conn.commit()
 
 
-def get_session_epoch(conn) -> int:
-    return int(get_setting(conn, "session_epoch", "0"))
-
-
-def bump_session_epoch(conn) -> int:
-    conn.execute(
-        "INSERT INTO settings(key,value) VALUES('session_epoch','1') "
-        "ON CONFLICT(key) DO UPDATE SET value = CAST(settings.value AS INTEGER) + 1")
-    conn.commit()
-    return get_session_epoch(conn)
-
-
-def get_password_hash(conn):
-    return get_setting(conn, "password_hash", None)
-
-
-def set_password_hash(conn, h) -> None:
-    set_setting(conn, "password_hash", h)
-
-
-def setup_required(conn) -> bool:
-    return get_password_hash(conn) is None
-
-
-def get_setup_token_hash(conn):
-    return get_setting(conn, "setup_token", None)
-
-
-def set_setup_token_hash(conn, h) -> None:
-    set_setting(conn, "setup_token", h)
-
-
-def clear_setup_token(conn) -> None:
-    conn.execute("DELETE FROM settings WHERE key=?", ("setup_token",))
-    conn.commit()
-
-
 def plant_public(row) -> dict:
     return {
         "id": row["id"],

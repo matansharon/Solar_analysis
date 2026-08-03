@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useAuth } from "../auth";
 
 interface ImportSummary {
   created: string[];
@@ -17,12 +16,11 @@ export default function Settings() {
       <div className="page-header">
         <div className="page-header__title">
           <h1>Settings</h1>
-          <p>Analysis defaults, admin password, and one-time config import.</p>
+          <p>Analysis defaults and one-time config import.</p>
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 520 }}>
         <GeneralSettingsCard />
-        <ChangePasswordCard />
         <ImportCard />
       </div>
     </div>
@@ -112,71 +110,6 @@ function GeneralSettingsCard() {
 
           <button type="submit" className="btn btn--primary" disabled={saving}>
             {saving ? "Saving…" : "Save settings"}
-          </button>
-        </form>
-      )}
-    </section>
-  );
-}
-
-function ChangePasswordCard() {
-  const { refresh } = useAuth();
-  const [oldPassword, setOldPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      await api.changePassword(oldPassword, newPassword);
-      setOldPassword("");
-      setNewPassword("");
-      setDone(true);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "change password failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="panel" style={{ padding: 20 }}>
-      <h2>Change password</h2>
-      {done ? (
-        <p className="alert alert--ok">Password changed — please log in again.</p>
-      ) : (
-        <form onSubmit={(e) => void handleSubmit(e)}>
-          <label className="field">
-            <span className="field__label">Current password</span>
-            <input
-              type="password"
-              className="field__input"
-              value={oldPassword}
-              onChange={(e) => setOldPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </label>
-          <label className="field">
-            <span className="field__label">New password</span>
-            <input
-              type="password"
-              className="field__input"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </label>
-          {error && <p className="alert alert--error">{error}</p>}
-          <button type="submit" className="btn btn--primary" disabled={busy}>
-            {busy ? "Changing…" : "Change password"}
           </button>
         </form>
       )}

@@ -21,18 +21,3 @@ def test_app_settings_roundtrip(tmp_path):
     assert s["model"] == "claude-opus-4-8"
     assert s["max_input_tokens"] == 1000
     assert s["output_language"] == "he"
-
-
-def test_epoch_starts_zero_and_bumps(tmp_path):
-    c = _conn(tmp_path)
-    assert repo.get_session_epoch(c) == 0
-    assert repo.bump_session_epoch(c) == 1
-    assert repo.get_session_epoch(c) == 1
-
-
-def test_setup_required_until_password_set(tmp_path):
-    c = _conn(tmp_path)
-    assert repo.setup_required(c) is True
-    repo.set_password_hash(c, "pbkdf2_sha256$1$aa$bb")
-    assert repo.setup_required(c) is False
-    assert repo.get_password_hash(c) == "pbkdf2_sha256$1$aa$bb"

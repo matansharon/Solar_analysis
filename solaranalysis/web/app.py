@@ -1,20 +1,17 @@
 from __future__ import annotations
-import hashlib
 import logging
 import os
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.routing import Match
 
-from . import db, repo, crypto, auth as authmod
+from . import db, crypto
 from .paths import Paths
 
 log = logging.getLogger("solar.web")
 
-COOKIE = "solar_session"
-_PUBLIC = {"/api/auth/status", "/api/auth/login", "/api/auth/setup"}
+CSRF_HEADER = "x-solar-csrf"
 
 
 def db_dep_factory(paths: Paths):
@@ -27,68 +24,29 @@ def db_dep_factory(paths: Paths):
     return _dep
 
 
-def _authenticated(request: Request) -> bool:
-    paths: Paths = request.app.state.paths
-    cookie = request.cookies.get(COOKIE)
-    if not cookie:
-        return False
-    conn = db.connect(paths.db_path)
-    try:
-        epoch = repo.get_session_epoch(conn)
-    finally:
-        conn.close()
-    return authmod.check_cookie(request.app.state.key, cookie, epoch)
-
-
-def _matches_known_route(request: Request) -> bool:
-    """True if some registered route (other than the SPA catch-all) matches
-    this request's path, regardless of HTTP method. Lets the auth middleware
-    tell "real API endpoint, unauthenticated" (401) apart from "no such
-    endpoint" (fall through to the catch-all's JSON 404)."""
-    for route in request.app.router.routes:
-        if getattr(route, "path", None) == "/{full_path:path}":
-            continue
-        match, _ = route.matches(request.scope)
-        if match != Match.NONE:
-            return True
-    return False
-
-
 def create_app(paths: Paths, run_manager=None, schedule_service=None) -> FastAPI:
     app = FastAPI()
     app.state.paths = paths
+    # Also encrypts the stored plant portal credentials — see repo.create_plant.
     app.state.key = crypto.load_or_create_key(paths.key_path)
-    app.state.rate_limiter = authmod.RateLimiter(max_fails=5, window_s=60)
     app.state.run_manager = run_manager
     app.state.schedule_service = schedule_service
     app.state.db_dep = db_dep_factory(paths)
 
-    # First-boot: generate + log a setup token if none exists yet.
     conn = db.connect(paths.db_path)
     db.init_db(conn)
-    if repo.setup_required(conn) and repo.get_setup_token_hash(conn) is None:
-        token = os.urandom(16).hex()
-        repo.set_setup_token_hash(conn, hashlib.sha256(token.encode()).hexdigest())
-        log.warning("SETUP TOKEN (enter in the web setup screen): %s", token)
     conn.close()
 
     @app.middleware("http")
-    async def auth_and_csrf(request: Request, call_next):
-        path = request.url.path
-        if path.startswith("/api/"):
-            if request.method in ("POST", "PUT", "DELETE"):
-                if request.headers.get(authmod.CSRF_HEADER) is None:
-                    return JSONResponse({"detail": "CSRF header required"}, status_code=403)
-            if path not in _PUBLIC and not _authenticated(request):
-                if _matches_known_route(request):
-                    return JSONResponse({"detail": "authentication required"}, status_code=401)
-                # No real endpoint at this path: fall through so the SPA
-                # catch-all can return a plain JSON 404 instead of leaking
-                # a 401 for paths that don't exist.
+    async def csrf(request: Request, call_next):
+        # The API is unauthenticated, which is exactly why this stays: requiring
+        # a custom header forces a CORS preflight, so a page in someone's
+        # browser can't drive-by POST /api/runs or DELETE /api/plants/3.
+        if (request.url.path.startswith("/api/")
+                and request.method in ("POST", "PUT", "DELETE")
+                and request.headers.get(CSRF_HEADER) is None):
+            return JSONResponse({"detail": "CSRF header required"}, status_code=403)
         return await call_next(request)
-
-    from .routes.auth import router as auth_router
-    app.include_router(auth_router, prefix="/api/auth")
 
     from .routes.plants import router as plants_router
     from .routes.plant_history import router as plant_history_router

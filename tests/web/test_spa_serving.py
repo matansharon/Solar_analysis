@@ -1,6 +1,5 @@
-import hashlib
 from fastapi.testclient import TestClient
-from solaranalysis.web import db, repo
+from solaranalysis.web import db
 from solaranalysis.web.app import create_app
 from solaranalysis.web.paths import Paths
 

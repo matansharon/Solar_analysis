@@ -1,6 +1,4 @@
 import { NavLink } from "react-router-dom";
-import { api } from "./api";
-import { useAuth } from "./auth";
 
 const LINKS: { to: string; label: string; end?: boolean }[] = [
   { to: "/", label: "Dashboard", end: true },
@@ -11,16 +9,6 @@ const LINKS: { to: string; label: string; end?: boolean }[] = [
 ];
 
 export function Nav() {
-  const { refresh } = useAuth();
-
-  async function handleLogout() {
-    try {
-      await api.logout();
-    } finally {
-      await refresh();
-    }
-  }
-
   return (
     <nav className="app-nav" aria-label="Primary">
       <div className="app-nav__brand">
@@ -42,9 +30,6 @@ export function Nav() {
           </li>
         ))}
       </ul>
-      <button type="button" className="app-nav__logout" onClick={() => void handleLogout()}>
-        Log out
-      </button>
     </nav>
   );
 }

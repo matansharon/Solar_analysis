@@ -1,15 +1,13 @@
-export class AuthError extends Error {}
-
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   const opts: RequestInit = { method, headers, credentials: "same-origin" };
+  // Required by the backend on writes — see the csrf middleware in web/app.py.
   if (method !== "GET") headers["X-Solar-CSRF"] = "1";
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(url, opts);
-  if (res.status === 401) throw new AuthError("unauthorized");
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail ?? detail; } catch { /* ignore */ }
@@ -70,12 +68,6 @@ export interface SeriesPoint {
 }
 
 export const api = {
-  status: () => req<{ setup_required: boolean; authenticated: boolean }>("GET", "/api/auth/status"),
-  setup: (token: string, password: string) => req("POST", "/api/auth/setup", { token, password }),
-  login: (password: string) => req("POST", "/api/auth/login", { password }),
-  logout: () => req("POST", "/api/auth/logout"),
-  changePassword: (oldPw: string, newPw: string) => req("PUT", "/api/auth/password", { old: oldPw, new: newPw }),
-
   plants: () => req<Plant[]>("GET", "/api/plants"),
   createPlant: (data: Partial<Plant> & { password?: string; token?: string }) =>
     req<{ id: number }>("POST", "/api/plants", data),
