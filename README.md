@@ -233,7 +233,8 @@ activate the virtualenv first. Both forms accept the same arguments.
 
 **Arguments** (all optional; paths are resolved to absolute at startup)
 - `--host` (default `0.0.0.0`) — bind address.
-- `--port` (default `8000`) — bind port.
+- `--port` (default `8010`) — bind port. 8000 is deliberately avoided;
+  other projects on this machine listen there.
 - `--data-dir` (default `./data`) — where the server keeps its database
   (`app.db`), encryption key (`secret.key`), logs, session cache, and report
   output. Point this at a persistent, private location in production.
@@ -258,7 +259,7 @@ CORS preflight, which fails. Any deliberate API client (curl, scripts) just
 sends the header:
 
 ```bash
-curl -X POST http://localhost:8000/api/runs -H "X-Solar-CSRF: 1" \
+curl -X POST http://localhost:8010/api/runs -H "X-Solar-CSRF: 1" \
   -H "Content-Type: application/json" -d '{"time_range":"snapshot"}'
 ```
 
@@ -317,14 +318,14 @@ Two terminals — backend first, because the Vite dev server proxies `/api` to i
 
 ```bash
 # Terminal 1 — backend, from the project root
-python app.py                # http://localhost:8000
+python app.py                # http://localhost:8010
 
 # Terminal 2 — frontend dev server with hot reload
 cd frontend
-npm run dev                  # http://localhost:5173  ← open this one
+npm run dev                  # http://localhost:5180  ← open this one
 ```
 
-Use `http://localhost:5173` while developing; `:8000` serves the last
+Use `http://localhost:5180` while developing; `:8010` serves the last
 `npm run build` output, not your live edits. `run_dev.bat` opens both windows
 at once if you'd rather not do it by hand.
 
