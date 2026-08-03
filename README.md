@@ -224,8 +224,12 @@ files. Rebuild after pulling frontend changes.
 ### Run
 
 ```bash
-python -m solaranalysis.web
+python app.py
 ```
+
+`app.py` is a thin wrapper over `python -m solaranalysis.web` that re-launches
+itself under `.venv` when started with another Python, so you don't have to
+activate the virtualenv first. Both forms accept the same arguments.
 
 **Arguments** (all optional; paths are resolved to absolute at startup)
 - `--host` (default `0.0.0.0`) — bind address.
@@ -314,6 +318,21 @@ A send failure never fails the run — it is logged as a note. The CLI
 (`python -m solaranalysis.cli`) does not email.
 
 ## Development
+
+Two terminals — backend first, because the Vite dev server proxies `/api` to it:
+
+```bash
+# Terminal 1 — backend, from the project root
+python app.py                # http://localhost:8000
+
+# Terminal 2 — frontend dev server with hot reload
+cd frontend
+npm run dev                  # http://localhost:5173  ← open this one
+```
+
+Use `http://localhost:5173` while developing; `:8000` serves the last
+`npm run build` output, not your live edits. `run_dev.bat` opens both windows
+at once if you'd rather not do it by hand.
 
 ```bash
 python -m pytest -q          # backend (includes solaranalysis.web)
