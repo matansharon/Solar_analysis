@@ -9,34 +9,16 @@ All arguments are passed through, e.g. `python app.py --port 8100`.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-VENV_PY = (os.path.join(ROOT, ".venv", "Scripts", "python.exe") if os.name == "nt"
-           else os.path.join(ROOT, ".venv", "bin", "python"))
-_GUARD = "SOLAR_APP_IN_VENV"
+import _venv
 
-
-def _same_interpreter(a: str, b: str) -> bool:
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+ROOT = _venv.ROOT
+VENV_PY = _venv.VENV_PY
 
 
 def _relaunch_in_venv() -> int | None:
-    """Re-run this script with the venv's Python. None = already correct."""
-    if os.environ.get(_GUARD) == "1":
-        return None
-    if not os.path.isfile(VENV_PY) or _same_interpreter(VENV_PY, sys.executable):
-        return None
-    env = dict(os.environ, **{_GUARD: "1"})
-    try:
-        return subprocess.run([VENV_PY, os.path.abspath(__file__), *sys.argv[1:]],
-                              cwd=ROOT, env=env).returncode
-    except KeyboardInterrupt:
-        return 0
+    return _venv.relaunch(__file__)
 
 
 def main() -> int:
