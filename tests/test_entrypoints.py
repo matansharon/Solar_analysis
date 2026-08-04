@@ -81,3 +81,48 @@ def test_daily_pipeline_does_not_override_explicit_dirs(monkeypatch):
     assert argv.count("--data-dir") == 1 and "D:\\d" in argv
     assert argv.count("--app-dir") == 1 and "D:\\a" in argv
     assert "--only" in argv and "strings" in argv
+
+
+def test_daily_pipeline_does_not_override_explicit_dirs_equals_form(monkeypatch):
+    # `_with_default` has a second recognition path — `a.startswith(flag +
+    # "=")` — for the `--flag=value` spelling. Only the space-separated form
+    # was covered above; this pins the `=` form too.
+    seen = {}
+    monkeypatch.setattr(daily_pipeline, "_relaunch", lambda: None)
+    monkeypatch.setattr(daily_pipeline, "_orchestrator_main",
+                        lambda argv: seen.update(argv=argv) or 0)
+    daily_pipeline.main(["--data-dir=D:\\d", "--app-dir=D:\\a", "--only",
+                         "strings"])
+    argv = seen["argv"]
+    assert argv.count("--data-dir") == 0 and "--data-dir=D:\\d" in argv
+    assert argv.count("--app-dir") == 0 and "--app-dir=D:\\a" in argv
+    assert "--only" in argv and "strings" in argv
+
+
+def test_relaunch_is_a_noop_when_already_the_venv_interpreter(monkeypatch):
+    # The third early-return in `relaunch`: VENV_PY exists AND is the running
+    # interpreter. This is the ordinary production case (the Scheduled Task
+    # invokes the venv's own python.exe directly), so it must not spawn a
+    # subprocess — if it ever did, that's a silent extra process layer, not a
+    # crash, so make a regression loud instead.
+    monkeypatch.delenv("SOLAR_APP_IN_VENV", raising=False)
+    monkeypatch.setattr(_venv, "VENV_PY", sys.executable)
+
+    def _fail_if_called(cmd, **kw):
+        raise AssertionError(
+            "subprocess.run must not be called when already the venv interpreter")
+    monkeypatch.setattr(_venv.subprocess, "run", _fail_if_called)
+    assert _venv.relaunch(str(ROOT / "app.py")) is None
+
+
+def test_same_interpreter_falls_back_when_samefile_raises(monkeypatch):
+    # `same_interpreter`'s except-OSError branch (realpath + normcase) exists
+    # for paths `os.path.samefile` cannot stat. Force that branch directly and
+    # check both outcomes it must still get right.
+    def _raise(a, b):
+        raise OSError("cannot stat")
+    monkeypatch.setattr(os.path, "samefile", _raise)
+    assert _venv.same_interpreter("C:\\same\\python.exe",
+                                  "C:\\same\\python.exe") is True
+    assert _venv.same_interpreter("C:\\same\\python.exe",
+                                  "C:\\other\\python.exe") is False
