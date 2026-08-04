@@ -312,6 +312,28 @@ disabled: the run logs an "email not configured" note and finishes normally.
 A send failure never fails the run — it is logged as a note. The CLI
 (`python -m solaranalysis.cli`) does not email.
 
+### Scheduled daily pipeline
+
+One entry point runs everything the app produces, for Windows Task Scheduler:
+
+```bash
+python daily_pipeline.py                        # all three stages
+python daily_pipeline.py --only strings --no-email
+```
+
+It runs the fleet comparison (through the same code path the web UI uses, so the
+run appears in run history), then the SolarEdge optimizer collector, then the
+Growatt string collector — each in its own process, continuing past a failure.
+The exit code is a bitmask naming the failing stage (`1` fleet, `2` optimizers,
+`4` strings, `8` the orchestrator itself), one log lands in
+`data/logs/pipeline-<stamp>.log`, and any failure emails an alert to
+`PIPELINE_RECIPIENTS` (falling back to `REPORT_RECIPIENTS`) — which matters
+because a failed fleet run emails no report at all.
+
+`python -m solaranalysis.orchestrator --data-dir DIR --app-dir DIR` is the same
+thing without the venv wrapper; that is the form the Scheduled Task uses. See
+`DEPLOYMENT.md` §13.
+
 ## Development
 
 Two terminals — backend first, because the Vite dev server proxies `/api` to it:

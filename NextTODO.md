@@ -200,7 +200,10 @@ On top of B1's stored series: `optimizers/analyze.py` (pure `analyze_site` — d
 - [ ] **First-time deploy to llmadmin per `DEPLOYMENT.md`** (confirm `SolarAnalysis` + port 8010 free); copy `.env` (ANTHROPIC_API_KEY + GRAPH_* + REPORT_RECIPIENTS [+ optional OPTIMIZER_RECIPIENTS and STRING_RECIPIENTS]) and `config.yaml` by hand (both gitignored). **Push `master` first** — see Deploy status. **Run on the server.**
   - `DEPLOYMENT.md` step 3 now covers `playwright install chromium` with a machine-scope `PLAYWRIGHT_BROWSERS_PATH` — this was **missing** before and would have failed the first portal login under `LocalSystem`.
 - [ ] **Optimizer live smoke run (was B1 Task 8 + B2 Task 7)** — needs real SolarEdge creds; now written up as `DEPLOYMENT.md` §11 (dry run → `--backfill 90` → scheduled task). Confirm the 4 sites populate `optimizers`/`optimizer_energy` AND an anomaly email arrives; spot-check one flagged optimizer against the Digital-Twin panel.
-- [ ] **Schedules (ops, on the server):** web UI daily fleet run ~06:00 (Settings/Schedules, all days, range `snapshot`); optimizer collector+report ~06:30 (§11); Growatt string collector ~06:45 (§12). All three documented in `DEPLOYMENT.md`, none yet *created* on the server.
+- [ ] **Schedule (ops, on the server):** one `SolarAnalysis-Pipeline` task at
+  ~06:00 running all three subsystems (`DEPLOYMENT.md` §13). Supersedes the
+  three-schedule plan. Still to do on the server: §11/§12's backfills first,
+  then the §13 dry run, then register. Do not create a Settings → Schedules row.
 - [ ] Backlog (non-blocking): populate optimizer module tilt/azimuth/make/model (per-optimizer info call — not in the layout tree); strengthen analyze sort-ordering + degradation-guard tests; Phase A `base.py._finish_raw` import placement; `db.connect` sets no `busy_timeout` so web-app contention surfaces at sqlite3's 5 s default.
 
 ## Environment note

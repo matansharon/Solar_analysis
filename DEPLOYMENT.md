@@ -139,9 +139,15 @@ confirm:
 
 Then create the daily schedule in the UI (Settings → Schedules, ~06:00, all days,
 range `snapshot`). The scheduler runs **inside this service** — the service being
-up is what makes scheduled report emails go out.
+up is what makes scheduled report emails go out. §13 replaces this — do not
+create the schedule row there. The service is then only the UI and run history;
+scheduled reports come from the Scheduled Task.
 
 ### 11. Daily optimizer collector + anomaly report (scheduled task)
+
+Superseded for scheduling by §13, which runs this collector as one of its
+stages. The dry run and backfill below are still the reference, and the
+backfill is still a prerequisite.
 
 The per-optimizer collector is a **separate process**, not part of the web
 service — it has its own entry point and its own email. Run it after the fleet
@@ -200,6 +206,10 @@ On an all-clear day the report still emails, but the narrative model call is
 skipped — a tables-only email is expected, not a failure.
 
 ### 12. Daily Growatt string collector (scheduled task)
+
+Superseded for scheduling by §13, which runs this collector as one of its
+stages. The dry run and backfill below are still the reference, and the
+backfill is still a prerequisite.
 
 Like the optimizer collector, this is a **separate process** with its own entry
 point. It collects per-MPPT-input daily energy plus the full 5-minute
@@ -332,6 +342,134 @@ tables (`inverter_channels`, `channel_day_energy`, `channel_samples`,
 — no existing table is altered or dropped — and this path has been exercised
 against a real populated database. Still, take a copy of `app.db` before the
 first run if the deployment already holds data you care about.
+
+### 13. Daily pipeline — one scheduled task for all three subsystems
+
+This supersedes the three separate schedules for *scheduling only*. §11 and §12
+remain the reference for manual runs and the backfills, which are still
+prerequisites — **run their 90-day backfills before enabling this task**, or the
+first week of string reports will be all-clear by construction.
+
+**Do not also:**
+- create a row in Settings → Schedules (disable any that exists) — it would run
+  a second fleet report, from inside the web service, and email it;
+- register `SolarAnalysis-Optimizers` or `SolarAnalysis-Strings`. On a server
+  where they already exist:
+  ```powershell
+  Unregister-ScheduledTask -TaskName "SolarAnalysis-Optimizers" -Confirm:$false
+  Unregister-ScheduledTask -TaskName "SolarAnalysis-Strings" -Confirm:$false
+  ```
+
+**Do step 10 first.** Both collectors read their plant's stored credentials from
+`app.db`, which only exist once the plant is added through the web UI.
+
+**Take a copy of `app.db` before the first run** if the deployment already holds
+data you care about — the first run applies §12's additive v7 migration.
+
+Dry run the two collectors, no email:
+
+```powershell
+cd C:\apps\solar-analysis
+.\.venv\Scripts\python.exe -m solaranalysis.orchestrator `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis `
+  --only optimizers,strings --no-email
+```
+
+**Verify:** `data\logs\pipeline-<stamp>.log` exists and ends with a `=== summary
+===` block naming both stages, and `echo $LASTEXITCODE` is `0`. A `2` means the
+optimizer plant is missing from `app.db`, `4` the Growatt one.
+
+Then the whole pipeline, mail included:
+
+```powershell
+.\.venv\Scripts\python.exe -m solaranalysis.orchestrator `
+  --data-dir C:\apps\solar-analysis\data --app-dir C:\apps\solar-analysis
+```
+
+**Verify:** three emails arrive (fleet dashboard, optimizer anomalies, string
+anomalies), the run appears in the web UI's Runs history with trigger
+`scheduled`, and the exit code is `0`. As in §11/§12, **a 0 exit code does not by
+itself prove mail went out** — check the log's final lines.
+
+Register the daily task at 06:00:
+
+```powershell
+$app = "C:\apps\solar-analysis"
+$action = New-ScheduledTaskAction -Execute "$app\.venv\Scripts\python.exe" `
+  -Argument "-m solaranalysis.orchestrator --data-dir $app\data --app-dir $app" `
+  -WorkingDirectory $app
+$trigger  = New-ScheduledTaskTrigger -Daily -At 6:00am
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
+  -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "SolarAnalysis-Pipeline" -Action $action `
+  -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest
+```
+
+`-WorkingDirectory` must be the repo root: `.env` resolves relative to it, and
+that is where `ANTHROPIC_API_KEY`, `GRAPH_*`, and the recipient lists come from.
+Unlike §11/§12, `PYTHONIOENCODING` is **not** required — the orchestrator forces
+UTF-8 on its own stdout and on every stage it spawns.
+
+**Verify:** `Start-ScheduledTask -TaskName "SolarAnalysis-Pipeline"`, then
+`(Get-ScheduledTaskInfo "SolarAnalysis-Pipeline").LastTaskResult` → `0`.
+
+**Exit codes.** A bitmask, so the code names the stage:
+
+| Code | Meaning |
+|------|---------|
+| 0 | every attempted stage ok |
+| 1 | fleet failed |
+| 2 | optimizers failed |
+| 4 | strings failed |
+| 3 / 5 / 6 / 7 | the combinations (e.g. 5 = fleet + strings) |
+| 8 | the orchestrator itself could not run — a previous run still holds `data\pipeline.lock`, bad arguments, or an error before any stage |
+
+A `partial` fleet run — some plants unavailable — is **not** a failure; that
+report emails with its own "Unavailable Plants" section.
+
+**When something breaks** you get one alert email listing every stage's outcome
+plus the failed stage's own evidence. Recipients: `PIPELINE_RECIPIENTS` if set,
+otherwise `REPORT_RECIPIENTS`. Clean days send no alert. Note the alert is the
+*only* signal for a failed fleet run, which emails no report at all.
+
+**Where to look:**
+- `data\logs\pipeline-<stamp>.log` — stage boundaries, outcomes, timings, and the
+  collectors' full output. Pruned after 30 days.
+- `data\logs\run-<id>.log` — the fleet stage's own detail; the pipeline log names
+  the id and path.
+- `data\pipeline.lock` — present only while a run is in flight. A stale one from
+  a killed run is reclaimed automatically on the next run: immediately if its pid
+  is gone, and after 12 hours regardless, which covers a pid Windows has recycled
+  to some other live process. You should never need to delete it by hand.
+
+**Task Scheduler discards this task's stdout and stderr.** Almost everything the
+orchestrator reports goes to `pipeline-<stamp>.log` above, so that is mostly
+harmless — but there is one path it does not cover. If the orchestrator fails
+*before* it can create that log file (the data volume is full, or its ACLs deny
+writes — exactly what the pre-stage guard exists to catch), stderr is the only
+channel it has, and Task Scheduler throws it away. The only remaining signal is
+`LastTaskResult = 8`. If a run reports `8` with no `pipeline-<stamp>.log` written
+at all, the cause is almost certainly the data directory being unwritable —
+re-run the same command by hand in a PowerShell window to see the actual error.
+You can also make the task capture it by wrapping the call in a one-line `.cmd`
+that redirects both streams to a file — the same wrapper trick §12 already
+suggests for `PYTHONIOENCODING`, so if you already made one there, that is where
+to add the redirect.
+
+**Self-healing after a killed run.** A run killed mid-fleet-stage — Ctrl-C, the
+3h limit, a reboot — leaves its `runs` row at `running`. The next run detects
+that the holder is gone, logs `[note] reclaimed a stranded runs row <id>`, marks
+it `interrupted`, and proceeds. A row younger than 15 minutes, or one whose pid
+is still alive, is treated as a genuine run and yielded to instead: you will see
+`SKIPPED` and no fleet report that morning, which is correct if someone is
+running one from the UI. Two `SKIPPED` days in a row with nobody using the UI is
+worth investigating.
+
+**Tuning:** `--only fleet` to re-run a single stage by hand,
+`--timeout-fleet N` / `--timeout-optimizers N` / `--timeout-strings N` in minutes
+(defaults 45/60/30), `--range 30d` for a different window,
+`--log-retention-days N`.
 
 ## Update an existing deployment
 ```powershell
