@@ -52,7 +52,9 @@ something breaks.
 |---|---|
 | `solaranalysis/orchestrator.py` | All logic. `python -m solaranalysis.orchestrator --data-dir DIR --app-dir DIR` |
 | `daily_pipeline.py` (repo root) | Thin venv-relaunch wrapper mirroring `app.py`; defaults `--data-dir`/`--app-dir` from its own location |
-| `tests/test_orchestrator.py` | Unit tests over the pure parts |
+| `_venv.py` (repo root) | The venv relaunch, shared by both root entry points (see Shared-code touches) |
+| `app.py` (repo root) | Modified: delegates its relaunch to `_venv.py` |
+| `tests/test_orchestrator.py`, `tests/test_entrypoints.py` | Unit tests over the pure parts and the entry-point wiring |
 | `DEPLOYMENT.md` §13 | Dry run → register → verify, and what it supersedes |
 
 The registered task invokes `-m solaranalysis.orchestrator`, consistent with
@@ -113,6 +115,25 @@ ours — but it logs a prominent warning and appears in the run summary. Under t
 §13 configuration (no schedule row) it should never happen; if it does, someone
 is running the UI or the schedule row came back.
 
+**A stranded `running` row must be reclaimed, not obeyed.** Treating every
+`status='running'` row as live is a silent-forever trap, and it is easy to reach:
+a Ctrl-C during §13's own by-hand run raises `KeyboardInterrupt`, which
+`except Exception` does not catch, so the daemon pump thread dies before
+`_finish()` writes a status. The 3h execution limit and a 06:30 reboot do the
+same. Only the web app's FastAPI startup calls `reconcile_on_startup()`, so the
+row survives until the service restarts — and every run until then logs
+`SKIPPED`, exits `0`, and mails nothing. So the stage classifies each row and
+reclaims the dead ones with `repo.mark_interrupted`, under three rules:
+
+- A live pid is **yielded to, never killed** — it may be a legitimate UI run.
+  This is why `reconcile_on_startup()` is not reused: it kills the holder.
+- A NULL `runner_pid` is **not** "dead". `repo.create_run` commits `running`
+  before `set_run_pid` runs after the spawn, so a starting run has a pidless
+  window; reclaiming it would launch the second concurrent fleet run the check
+  exists to prevent. Pidless rows are judged on age alone (15-minute grace).
+- **Age is the backstop for a recycled pid**, which `pid_exists` would wrongly
+  report as alive.
+
 `RunManager`'s `_lock` is per-instance, so it provides no cross-process
 mutual exclusion against the NSSM service. The `repo.running_runs()` check is
 what covers that, and the lock file below covers overlap with a previous
@@ -160,6 +181,15 @@ pid (checked with psutil, already a dependency) means exit `8` with a
 the stale holder. Removed in a `finally`. This matters because
 `-StartWhenAvailable` plus a slow run can otherwise re-enter.
 
+Liveness alone is not sufficient, for the same pid-recycling reason as above: the
+3h execution limit kills a run without letting the `finally` fire, so the lock
+survives holding a pid Windows may reassign to a live service — and then the
+pipeline is dead every morning with no notification. A `MAX_LOCK_AGE_H = 12` age
+guard reclaims regardless of liveness. That bound exceeds the 3h limit that
+creates the stranded lock and stays under the 24h schedule interval, so the next
+run always recovers. A missing, unparseable, or future `started_at` reads as
+stale, never as infinite age.
+
 ### Logging
 
 - One file per run: `<data-dir>/logs/pipeline-YYYYMMDD-HHMMSS.log`, UTC stamp,
@@ -170,6 +200,14 @@ the stale holder. Removed in a `finally`. This matters because
   without `PYTHONIOENCODING=utf-8` a Hebrew or `·` print dies with a
   `UnicodeEncodeError` that reads like a collection failure. Setting it in
   process removes the prerequisite from the task registration.
+- Reconfiguring our own streams does **not** cover the children, and the fleet
+  stage is spawned by `RunManager._default_spawn`, which passes no `env=`. So
+  `os.environ["PYTHONIOENCODING"] = "utf-8:replace"` is set unconditionally at
+  start and inherited — the same mechanism `SOLAR_NO_EMAIL` relies on. It is
+  `utf-8:replace` rather than bare `utf-8` because the latter gives the child
+  `errors="strict"`, and an unencodable surrogate would still raise. It is an
+  assignment rather than `setdefault` so a leftover machine-scope `cp1255` from
+  the §11/§12 registrations cannot silently win.
 - `pipeline-*.log` files older than `--log-retention-days` (default 30) are
   pruned at start. Bounded growth, no separate cleanup job. Nothing else in
   `logs/` is touched — `run-<id>.log` files belong to the web app.
@@ -193,7 +231,10 @@ Recipients: `PIPELINE_RECIPIENTS` if set, else `mailer.recipients()`
 (`REPORT_RECIPIENTS`) — the same override pattern as `OPTIMIZER_RECIPIENTS` and
 `STRING_RECIPIENTS`.
 
-Subject: `Solar pipeline · FAILED · <stages> · YYYY-MM-DD HH:MM UTC`
+Subject: `Solar pipeline · FAILED · <stages> · YYYYMMDD-HHMMSS UTC` — the same
+compact stamp as `runner.py`'s existing subject convention and the
+`pipeline-<stamp>.log` filename, so an alert's stamp pastes straight into a log
+lookup.
 
 Body: a small inline-styled HTML table — stage, outcome, exit code, duration —
 plus, for each failed stage, the evidence needed to act on it without an RDP
@@ -232,7 +273,7 @@ An unknown stage name is a usage error and exits `8`.
 
 ## Shared-code touches
 
-Two, both small and guarded.
+Three, all small and guarded.
 
 1. **`web/runner.py` — honour `--no-email`.** The runner mails whenever Graph is
    configured, so without this the orchestrator's `--no-email` would be a
@@ -245,6 +286,15 @@ Two, both small and guarded.
    `GRAPH_CLIENT_SECRET` as `runner.collect_secrets` adds. It calls the existing
    `repo.list_plants` / `repo.load_plant_auth` / `crypto.load_or_create_key`
    directly rather than reaching into a private method.
+3. **`app.py` delegates its venv relaunch to a new root `_venv.py`.**
+   `daily_pipeline.py` needs the same relaunch, and `app.py`'s private version
+   hardcodes its own `__file__`, so it cannot be reused as-is. Extracting it is
+   the DRY answer; the alternative is a second copy that drifts. The change is a
+   behaviour-preserving delegation — `ROOT`, `VENV_PY`, `_relaunch_in_venv`, and
+   the `SOLAR_APP_IN_VENV` guard name all keep their current meanings — and it is
+   pinned by a test, because `python app.py --help` cannot distinguish a working
+   relaunch from one that silently returns `None`. `_venv.py` is stdlib-only, so
+   it imports before any dependency is installed.
 
 `load_dotenv(paths.env_file)` runs at orchestrator start so `GRAPH_*` and
 `PIPELINE_RECIPIENTS` are available for the alert. Each child loads it again
@@ -256,17 +306,29 @@ itself.
 portal, Playwright, or Graph calls — matching the existing posture where live
 glue is validated by real runs and unit tests cover the pure layers.
 
-- exit-code aggregation: all-ok, each single failure, every combination, and
-  stages that were skipped or not selected
+- exit-code aggregation: all-ok, each single failure, every combination (3, 5, 6,
+  7), stages skipped or not selected, and the synthetic `orchestrator` outcome
 - `--only` selection and rejection of an unknown stage name (exit 8)
 - alert trigger rules: `partial` → quiet, failure → alert, `--no-email` → quiet,
   lock-held → quiet
 - alert body composition: per-stage rows, and the failed stage's log tail
-- lock: acquire, refuse on a live pid, reclaim a stale one, release on failure
+- lock: acquire, refuse on a live pid, reclaim a stale one, reclaim an expired
+  one even from a live pid, treat an unusable timestamp as stale, release on
+  failure, and never delete a lock we do not own
 - log retention pruning, and that `run-<id>.log` files survive it
 - collector exit 2/3/4 all mapping to failure
 - the fleet timeout path, asserting `cancel` was called and the outcome recorded
-- the fleet skip path when `repo.running_runs()` is non-empty
+- the fleet skip path for a live holder, the reclaim path for a stranded row
+  (including one whose pid was recycled and reads as alive), and that a pidless
+  just-started run is yielded to rather than reclaimed
+- that `PYTHONIOENCODING` reaches the fleet stage, since §13 promises it
+- that `app.py` still delegates to `_venv.relaunch` with its own path
+
+Two of these guard against defects that only surfaced when the plan's own code
+was executed rather than read: a lock-held test that passed for the wrong reason,
+and a `SOLAR_NO_EMAIL` leak that silently suppressed email in eight unrelated
+tests downstream. `SOLAR_NO_EMAIL` therefore joins the autouse env scrub in
+`tests/conftest.py`.
 
 ## Documentation changes
 
