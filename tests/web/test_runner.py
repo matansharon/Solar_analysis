@@ -503,3 +503,26 @@ def test_email_is_not_suppressed_by_default(monkeypatch):
     assert runner.email_suppressed() is False
     monkeypatch.setenv("SOLAR_NO_EMAIL", "0")
     assert runner.email_suppressed() is False
+
+
+def test_no_email_suppresses_even_when_mailer_configured(tmp_path, monkeypatch, capsys):
+    # Integration test: SOLAR_NO_EMAIL=1 suppresses email even when Microsoft
+    # Graph IS configured. This is the orchestrator's --no-email contract.
+    # Ordering matters: suppression must be checked before is_configured().
+    paths = _paths(tmp_path)
+    _seed_run(paths)
+    monkeypatch.setenv("SOLAR_NO_EMAIL", "1")
+    monkeypatch.setattr(runner, "run_pipeline", _success_pipeline)
+    sent = []
+    monkeypatch.setattr(runner.mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(runner.mailer, "recipients", lambda: ["op@example.com"])
+    monkeypatch.setattr(runner.mailer, "send_report",
+                        lambda subject, html: sent.append(subject))
+    rc = runner.run_analysis_job(paths, run_id=1)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert sent == []  # No email sent despite mailer being configured
+    events = [json.loads(l[len("@@EVENT@@ "):]) for l in out.splitlines()
+              if l.startswith("@@EVENT@@ ")]
+    notes = [e.get("reason", "") for e in events if e["event"] == "note"]
+    assert any("email suppressed (SOLAR_NO_EMAIL)" in r for r in notes)
