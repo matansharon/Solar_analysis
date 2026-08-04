@@ -1883,12 +1883,35 @@ def test_main_exports_utf8_for_every_child_including_the_fleet_runner(tmp_path,
     assert seen["enc"] == "utf-8:replace"
 
 
-def test_main_returns_8_when_a_stage_raises_unexpectedly(tmp_path):
+def test_main_isolates_a_stage_that_raises_unexpectedly(tmp_path):
+    # A stage raising is that STAGE's failure, not the orchestrator's: the
+    # exit code must name it (fleet = 1), and the later stages must still run.
+    # Letting it reach the outer handler would report 8 and skip both
+    # collectors, which defeats continue-on-failure.
     (tmp_path / "app").mkdir()
+    ran = []
 
     def boom(*a, **k):
         raise RuntimeError("unexpected")
-    rc = orch.main(_main_args(tmp_path), fleet=boom, collector=_fake_stage("ok"),
+
+    def collector(name, *a, **k):
+        ran.append(name)
+        return orch.StageOutcome(name, "ok", exit_code=0)
+    rc = orch.main(_main_args(tmp_path), fleet=boom, collector=collector,
+                   alert=lambda *a, **k: (False, "x"))
+    assert rc == orch.STAGE_BITS["fleet"]
+    assert ran == ["optimizers", "strings"], "later stages must still run"
+
+
+def test_main_returns_8_when_something_outside_the_stage_loop_fails(tmp_path,
+                                                                   monkeypatch):
+    # Exit 8 is reserved for the orchestrator itself failing. Here the summary
+    # path breaks, which is outside any stage.
+    (tmp_path / "app").mkdir()
+    monkeypatch.setattr(orch, "aggregate_exit_code",
+                        lambda outcomes: 1 / 0)
+    rc = orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+                   collector=_fake_stage("ok"),
                    alert=lambda *a, **k: (False, "x"))
     assert rc == orch.ORCHESTRATOR_FAILED
 
@@ -2036,12 +2059,22 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
 
             outcomes = []
             for name in stages:
-                if name == "fleet":
-                    outcomes.append((fleet or run_fleet_stage)(
-                        paths, args.range, timeouts["fleet"], log))
-                else:
-                    outcomes.append((collector or run_collector_stage)(
-                        name, paths, timeouts[name], args.no_email, log))
+                # Per-stage isolation. Without it an unexpected raise from one
+                # stage — a transient sqlite lock in the fleet stage's guard
+                # query, say — would fall through to the outer handler, skip
+                # every later stage, and report 8 instead of naming the stage
+                # that actually broke. Continue-on-failure is the whole point.
+                try:
+                    if name == "fleet":
+                        outcomes.append((fleet or run_fleet_stage)(
+                            paths, args.range, timeouts["fleet"], log))
+                    else:
+                        outcomes.append((collector or run_collector_stage)(
+                            name, paths, timeouts[name], args.no_email, log))
+                except Exception as e:
+                    detail = f"{e}\n{traceback.format_exc()}"
+                    log(f"!!! stage {name}: raised unexpectedly: {detail}")
+                    outcomes.append(StageOutcome(name, "failed", detail=detail))
 
             code = aggregate_exit_code(outcomes)
             log("=== summary ===")
