@@ -55,6 +55,12 @@ def collect_secrets(cfg: AppConfig) -> list[str]:
     return out
 
 
+def email_suppressed() -> bool:
+    """The orchestrator sets SOLAR_NO_EMAIL=1 for its --no-email dry runs. The
+    web app never sets it, so its behaviour is unchanged."""
+    return os.getenv("SOLAR_NO_EMAIL") == "1"
+
+
 def run_analysis_job(paths: Paths, run_id: int) -> int:
     load_dotenv(paths.env_file)
     conn = db.connect(paths.db_path)
@@ -154,7 +160,10 @@ def run_analysis_job(paths: Paths, run_id: int) -> int:
         subject = (f"Solar Fleet Analysis · {status} · {scope_label} "
                    f"· range {run['time_range']} · {stamp} UTC")
         try:
-            if mailer.is_configured() and mailer.recipients():
+            if email_suppressed():
+                events.emit_event({"event": "note",
+                                   "reason": "email suppressed (SOLAR_NO_EMAIL)"})
+            elif mailer.is_configured() and mailer.recipients():
                 body = dashboard_html or render_email_html(
                     report_md, "Solar Fleet Analysis", subtitle)
                 mailer.send_report(subject, body)

@@ -489,3 +489,17 @@ def test_run_job_status_sees_appendix_summary_sees_clean(tmp_path, monkeypatch, 
 
     assert "Unavailable Plants" in seen["status_input"]
     assert "Unavailable Plants" not in seen["summary_input"]
+
+
+def test_no_email_env_suppresses_the_report_email(tmp_path, monkeypatch):
+    # The orchestrator's --no-email has to cover the fleet stage too, or
+    # DEPLOYMENT.md §13's dry run mails a real report to the live list.
+    monkeypatch.setenv("SOLAR_NO_EMAIL", "1")
+    assert runner.email_suppressed() is True
+
+
+def test_email_is_not_suppressed_by_default(monkeypatch):
+    monkeypatch.delenv("SOLAR_NO_EMAIL", raising=False)
+    assert runner.email_suppressed() is False
+    monkeypatch.setenv("SOLAR_NO_EMAIL", "0")
+    assert runner.email_suppressed() is False
