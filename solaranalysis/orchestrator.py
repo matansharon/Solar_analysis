@@ -11,8 +11,10 @@ docs/superpowers/specs/2026-08-04-scheduled-pipeline-design.md
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 ALL_STAGES = ("fleet", "optimizers", "strings")
 STAGE_BITS = {"fleet": 1, "optimizers": 2, "strings": 4}
@@ -91,3 +93,63 @@ def _build_parser() -> argparse.ArgumentParser:
                         metavar="MINUTES")
     ap.add_argument("--log-retention-days", type=int, default=30)
     return ap
+
+
+LOG_PREFIX = "pipeline-"
+TAIL_LINES = 20                  # lines of a failed stage carried into the alert
+
+
+def utc_stamp(now=None) -> str:
+    return (now or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
+
+
+def force_utf8(stream=None) -> None:
+    """DEPLOYMENT.md §12: without UTF-8 stdout, printing a Hebrew narrative or
+    the "·" in a subject line dies with a UnicodeEncodeError that reads like a
+    collection failure. Doing it here removes PYTHONIOENCODING from the task
+    registration's prerequisites."""
+    for s in ([stream] if stream is not None else [sys.stdout, sys.stderr]):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+class Tee:
+    """Line sink: redact once, then write to both stdout and the log file.
+    Returns the redacted line so callers can keep a tail for the alert."""
+
+    def __init__(self, fp, redactor=None):
+        self._fp = fp
+        self._redact = redactor.redact if redactor is not None else (lambda s: s)
+
+    def __call__(self, line: str) -> str:
+        line = self._redact(line.rstrip("\n"))
+        print(line)
+        self._fp.write(line + "\n")
+        self._fp.flush()          # a hung stage must still leave a usable log
+        return line
+
+
+def prune_logs(logs_dir: str, retention_days: int, now=None) -> list[str]:
+    """Delete expired `pipeline-*.log` files; return the names removed. Only
+    our own prefix is eligible — `run-<id>.log` belongs to the web app."""
+    if not os.path.isdir(logs_dir):
+        return []
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=retention_days)
+    removed = []
+    for name in sorted(os.listdir(logs_dir)):
+        if not (name.startswith(LOG_PREFIX) and name.endswith(".log")):
+            continue
+        try:
+            when = datetime.strptime(name[len(LOG_PREFIX):-len(".log")],
+                                     "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue                      # not one of ours; leave it alone
+        if when < cutoff:
+            try:
+                os.remove(os.path.join(logs_dir, name))
+                removed.append(name)
+            except OSError:
+                continue                  # locked or already gone; not fatal
+    return removed

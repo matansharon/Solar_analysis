@@ -100,3 +100,75 @@ def test_parser_usage_error_exits_8_not_argparse_2(capsys):
     with pytest.raises(SystemExit) as ei:
         orch._build_parser().parse_args([])          # missing required dirs
     assert ei.value.code == orch.ORCHESTRATOR_FAILED
+
+
+import io
+import os
+from datetime import datetime, timedelta, timezone
+
+from solaranalysis.web.events import Redactor
+
+
+def test_tee_writes_to_both_stdout_and_the_file(capsys):
+    buf = io.StringIO()
+    tee = orch.Tee(buf)
+    assert tee("hello\n") == "hello"
+    assert buf.getvalue() == "hello\n"
+    assert capsys.readouterr().out == "hello\n"
+
+
+def test_tee_redacts_secrets_before_they_reach_either_sink(capsys):
+    buf = io.StringIO()
+    tee = orch.Tee(buf, Redactor(["sekret"]))
+    line = tee("login failed for pw=sekret\n")
+    assert "sekret" not in line and "***" in line
+    assert "sekret" not in buf.getvalue()
+    assert "sekret" not in capsys.readouterr().out
+
+
+def test_utc_stamp_format():
+    assert orch.utc_stamp(datetime(2026, 8, 5, 6, 0, 30,
+                                   tzinfo=timezone.utc)) == "20260805-060030"
+
+
+def _write_log(logs_dir, name, text="x\n"):
+    path = os.path.join(logs_dir, name)
+    with open(path, "w", encoding="utf-8") as fp:
+        fp.write(text)
+    return path
+
+
+def test_prune_logs_removes_only_expired_pipeline_logs(tmp_path):
+    logs = tmp_path / "logs"; logs.mkdir()
+    _write_log(str(logs), "pipeline-20260601-060000.log")   # old
+    _write_log(str(logs), "pipeline-20260803-060000.log")   # fresh
+    now = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    removed = orch.prune_logs(str(logs), 30, now=now)
+    assert removed == ["pipeline-20260601-060000.log"]
+    assert os.path.exists(str(logs / "pipeline-20260803-060000.log"))
+
+
+def test_prune_logs_never_touches_the_web_apps_run_logs(tmp_path):
+    logs = tmp_path / "logs"; logs.mkdir()
+    _write_log(str(logs), "run-7.log")
+    _write_log(str(logs), "pipeline-20260101-060000.log")
+    now = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    removed = orch.prune_logs(str(logs), 30, now=now)
+    assert removed == ["pipeline-20260101-060000.log"]
+    assert os.path.exists(str(logs / "run-7.log"))
+
+
+def test_prune_logs_ignores_unparseable_names_and_a_missing_dir(tmp_path):
+    logs = tmp_path / "logs"; logs.mkdir()
+    _write_log(str(logs), "pipeline-not-a-stamp.log")
+    now = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    assert orch.prune_logs(str(logs), 30, now=now) == []
+    assert os.path.exists(str(logs / "pipeline-not-a-stamp.log"))
+    assert orch.prune_logs(str(tmp_path / "nope"), 30, now=now) == []
+
+
+def test_force_utf8_is_a_noop_on_a_stream_that_cannot_reconfigure():
+    # DEPLOYMENT.md §12: without UTF-8 stdout a Hebrew or "·" print dies with a
+    # UnicodeEncodeError that reads like a collection failure. A stream that
+    # can't be reconfigured must not raise.
+    orch.force_utf8(io.StringIO())
