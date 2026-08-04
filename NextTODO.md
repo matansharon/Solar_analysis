@@ -206,6 +206,39 @@ On top of B1's stored series: `optimizers/analyze.py` (pure `analyze_site` — d
   then the §13 dry run, then register. Do not create a Settings → Schedules row.
 - [ ] Backlog (non-blocking): populate optimizer module tilt/azimuth/make/model (per-optimizer info call — not in the layout tree); strengthen analyze sort-ordering + degradation-guard tests; Phase A `base.py._finish_raw` import placement; `db.connect` sets no `busy_timeout` so web-app contention surfaces at sqlite3's 5 s default.
 
+### Deferred from the pipeline-orchestrator reviews (adjudicated, non-blocking)
+
+Ten per-task reviews plus a whole-branch review ran over
+`solaranalysis/orchestrator.py`. Everything load-bearing was fixed before merge;
+these were ruled defer, and are recorded here because the reasoning is worth
+keeping rather than rediscovering.
+
+- [ ] **A skipped fleet stage is invisible to the only monitor there is.** A
+  `skipped` stage sets no failure bit, so the run exits 0 and `should_alert` is
+  false — `DEPLOYMENT.md` §13 asks the operator to notice "two SKIPPED days in a
+  row", but nothing surfaces it. Reachable when the 3 h `ExecutionTimeLimit`
+  kills the orchestrator while its runner child survives and wedges the row:
+  the next morning skips, and recovery waits for the 24 h backstop, costing one
+  day. The spec accepted this trade, but the clean fix is to send the alert with
+  a `SKIPPED` subject while keeping exit 0, leaving the bitmask contract alone.
+- [ ] **Two `print(..., file=sys.stderr)` calls are still unguarded** — in
+  `_Parser.error` and `parse_only`'s `ValueError` handler. Same `OSError`-escapes-
+  and-exits-1 shape as the four sites `_safe_print` now covers. Ruled defer
+  because it needs a double fault: malformed arguments *and* an unwritable
+  stream, and a registered task's arguments are fixed at registration.
+- [ ] **Test-strength gaps, all behaviour-correct today:** `Tee`'s per-line
+  `flush()` is unpinned (an `io.StringIO` shows content either way, so removing
+  the flush fails nothing); `_lock_expired`'s naive-timestamp UTC coercion is
+  unpinned, and `live_run_holders` lacks the same coercion — unreachable only
+  because `run_manager._now()` has always been tz-aware, so it becomes a real
+  bug the moment another writer appears.
+- [ ] **`run_collector_stage`'s `Timer`+`Event` watchdog has a narrow
+  false-timeout window** if `proc.wait()` returns at the instant the timer
+  fires. Pre-existing in `RunManager.run_test`, not new debt.
+- [ ] **A `runs` row older than 24 h is reclaimed even with a live pid**, so a
+  genuinely >24 h web-UI run could overlap a scheduled fleet run. Deliberate
+  trade against the silent-forever skip; documented in §13.
+
 ## Environment note
 **Run everything through `.venv\Scripts\python.exe`, not the bare `python` on PATH.** They are different environments and the difference is not cosmetic: the system Python has `anthropic` **0.75.0**, which rejects the `output_config={"effort": ...}` argument every Claude call in this repo passes (`core/analyze.py`, `core/charts.py`, `core/dashboard.py`, `optimizers/report.py`, `strings/report.py`). The `.venv` has **0.116.0** and works. Because every narrative call site catches its own exception and degrades to tables-only, running under the wrong interpreter does not fail loudly — it silently drops the narrative and looks like a working run. Cost an incorrect "this is broken in B2 as well" conclusion during the C2 smoke test.
 
