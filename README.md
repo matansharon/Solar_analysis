@@ -306,6 +306,9 @@ Configure it in `.env`:
 - `GRAPH_SENDER` — the mailbox the app sends *as* (default
   `elcam.ai@elcam.co.il`).
 - `REPORT_RECIPIENTS` — comma-separated recipient list (default: the sender).
+- `PIPELINE_RECIPIENTS` — comma-separated recipient list for the scheduled
+  pipeline's failure alert (default: falls back to `REPORT_RECIPIENTS`). See
+  "Scheduled daily pipeline" below.
 
 If any `GRAPH_*` key is blank or `REPORT_RECIPIENTS` is empty, emailing is
 disabled: the run logs an "email not configured" note and finishes normally.

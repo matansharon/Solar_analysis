@@ -126,6 +126,22 @@ def test_tee_redacts_secrets_before_they_reach_either_sink(capsys):
     assert "sekret" not in capsys.readouterr().out
 
 
+def test_tee_call_survives_a_failing_file_write(capsys):
+    # A failing log write (full disk, denied ACL) must not be the thing that
+    # kills the run, and the caller still needs the redacted line back so the
+    # alert's tail keeps working.
+    class BoomFile:
+        def write(self, s):
+            raise OSError("disk full")
+
+        def flush(self):
+            raise OSError("disk full")
+    tee = orch.Tee(BoomFile(), Redactor(["sekret"]))
+    line = tee("login failed for pw=sekret\n")
+    assert line == "login failed for pw=***"
+    assert "sekret" not in capsys.readouterr().out
+
+
 def test_utc_stamp_format():
     assert orch.utc_stamp(datetime(2026, 8, 5, 6, 0, 30,
                                    tzinfo=timezone.utc)) == "20260805-060030"
@@ -690,6 +706,26 @@ def test_main_returns_zero_when_every_stage_is_ok(tmp_path):
     assert rc == 0
 
 
+def test_main_survives_an_unwritable_stdout(tmp_path, monkeypatch):
+    # DEPLOYMENT.md §13 lets an operator redirect the scheduled task's stdout
+    # to a file. On a full or ACL-denied volume — exactly what the pre-stage
+    # guard exists to catch — every Tee-logged line would otherwise raise
+    # OSError out of main(), and CPython would exit 1: misread by the decode
+    # table as "fleet failed" instead of the true, healthy outcome.
+    (tmp_path / "app").mkdir()
+
+    class BoomStdout:
+        def write(self, s):
+            raise OSError("disk full")
+
+        def flush(self):
+            pass
+    monkeypatch.setattr(sys, "stdout", BoomStdout())
+    rc = orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+                   collector=_fake_stage("ok"), alert=lambda *a, **k: (False, "x"))
+    assert rc == 0
+
+
 def test_main_exit_code_names_the_failing_stages(tmp_path):
     (tmp_path / "app").mkdir()
 
@@ -761,6 +797,33 @@ def test_main_exits_8_while_another_run_holds_the_lock(tmp_path, capsys,
     assert "still active" in capsys.readouterr().out
 
 
+def test_main_survives_a_lock_file_holding_valid_json_that_is_not_an_object(
+        tmp_path):
+    # A pipeline.lock containing "abc" (valid JSON, not an object) passes
+    # acquire_lock's isinstance(holder, dict) check and reaches the "reclaimed
+    # a stale lock" note, where a bare holder.get('pid') raises AttributeError
+    # on a plain str — caught by the catch-all, reporting exit 8 with zero
+    # stages run, all for a cosmetic log line.
+    (tmp_path / "app").mkdir()
+    paths = Paths.create(str(tmp_path / "data"), str(tmp_path / "app"))
+    lock = os.path.join(paths.data_dir, orch.LOCK_NAME)
+    with open(lock, "w", encoding="utf-8") as fp:
+        fp.write('"abc"')
+    ran = []
+
+    def fleet(*a, **k):
+        ran.append("fleet")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+
+    def collector(name, *a, **k):
+        ran.append(name)
+        return orch.StageOutcome(name, "ok", exit_code=0)
+    rc = orch.main(_main_args(tmp_path), fleet=fleet, collector=collector,
+                   alert=lambda *a, **k: (False, "x"))
+    assert rc == 0
+    assert ran == ["fleet", "optimizers", "strings"]
+
+
 def test_main_releases_the_lock_even_when_a_stage_fails(tmp_path):
     (tmp_path / "app").mkdir()
     orch.main(_main_args(tmp_path), fleet=_fake_stage("failed", code=1),
@@ -818,6 +881,25 @@ def test_main_no_email_suppresses_the_alert_and_sets_the_env(tmp_path,
     assert seen["suppressed"] == "1", "the fleet stage must inherit --no-email"
 
 
+def test_main_clears_a_leaked_no_email_env_when_the_flag_is_absent(tmp_path,
+                                                                    monkeypatch):
+    # A machine-scope SOLAR_NO_EMAIL=1 — left by a `setx` dry run, or present
+    # in `.env`, which load_dotenv reads just before this — must not silently
+    # suppress the fleet report on a normal run with no --no-email flag. The
+    # collectors take suppression from the --no-email argv flag, not the
+    # environment, so without this the symptom is "fleet report just stopped".
+    monkeypatch.setenv("SOLAR_NO_EMAIL", "1")
+    (tmp_path / "app").mkdir()
+    seen = {}
+
+    def fleet(*a, **k):
+        seen["suppressed"] = os.getenv("SOLAR_NO_EMAIL")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+    orch.main(_main_args(tmp_path), fleet=fleet, collector=_fake_stage("ok"),
+              alert=lambda *a, **k: (False, "x"))
+    assert seen["suppressed"] is None
+
+
 def test_main_exports_utf8_for_every_child_including_the_fleet_runner(tmp_path,
                                                                     monkeypatch):
     # DEPLOYMENT.md §13 tells the operator PYTHONIOENCODING is not needed.
@@ -827,6 +909,25 @@ def test_main_exports_utf8_for_every_child_including_the_fleet_runner(tmp_path,
     # doc's promise, and the 06:00 run would die on a Hebrew print.
     (tmp_path / "app").mkdir()
     monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    seen = {}
+
+    def fleet(*a, **k):
+        seen["enc"] = os.getenv("PYTHONIOENCODING")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+    orch.main(_main_args(tmp_path, "--only", "fleet"), fleet=fleet,
+              collector=_fake_stage("ok"), alert=lambda *a, **k: (False, "x"))
+    assert seen["enc"] == "utf-8:replace"
+
+
+def test_main_exports_utf8_even_over_a_leaked_machine_scope_cp1255(tmp_path,
+                                                                   monkeypatch):
+    # setenv, not delenv: os.environ.setdefault(...) would also pass the
+    # sibling test above (which only delenv's), so that test alone cannot
+    # catch this regression. This is the exact case the code comment at
+    # main()'s PYTHONIOENCODING assignment says must not happen — a leftover
+    # machine-scope cp1255 from the §11/§12 era must not win.
+    (tmp_path / "app").mkdir()
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1255")
     seen = {}
 
     def fleet(*a, **k):

@@ -406,10 +406,18 @@ Register-ScheduledTask -TaskName "SolarAnalysis-Pipeline" -Action $action `
   -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest
 ```
 
-`-WorkingDirectory` must be the repo root: `.env` resolves relative to it, and
-that is where `ANTHROPIC_API_KEY`, `GRAPH_*`, and the recipient lists come from.
-Unlike §11/§12, `PYTHONIOENCODING` is **not** required — the orchestrator forces
-UTF-8 on its own stdout and on every stage it spawns.
+`-WorkingDirectory` must be the repo root — but not for the reason you might
+expect. `.env` does **not** resolve relative to it: it comes from `--app-dir`
+above, which is already an absolute path, via `paths.env_file`. The real
+reason is that this package has no `pyproject.toml`/`setup.py` and is not
+installed into the venv, so `python -m solaranalysis.orchestrator` only
+imports at all because `-m` prepends the *current working directory* to
+`sys.path`. Relocate `-WorkingDirectory` — reasonably, if you believed the
+`.env` story and knew `--app-dir` is absolute — and the import fails with
+`ModuleNotFoundError`, which exits **1**, decoded by the table below as "fleet
+failed", on a server nobody can easily reach. Unlike §11/§12,
+`PYTHONIOENCODING` is **not** required — the orchestrator forces UTF-8 on its
+own stdout and on every stage it spawns.
 
 **Verify:** `Start-ScheduledTask -TaskName "SolarAnalysis-Pipeline"`, then
 `(Get-ScheduledTaskInfo "SolarAnalysis-Pipeline").LastTaskResult` → `0`.

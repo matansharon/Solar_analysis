@@ -126,6 +126,17 @@ def force_utf8(stream=None) -> None:
             pass
 
 
+def _safe_print(text, stream=None):
+    """Printing must never be the thing that kills the run: on a full or
+    read-only volume with the task's output redirected to a file, an
+    unguarded print raises OSError out of main() and CPython exits 1 —
+    which the exit-code table would misread as "fleet failed"."""
+    try:
+        print(text, file=stream or sys.stdout)
+    except Exception:
+        pass
+
+
 class Tee:
     """Line sink: redact once, then write to both stdout and the log file.
     Returns the redacted line so callers can keep a tail for the alert."""
@@ -136,9 +147,12 @@ class Tee:
 
     def __call__(self, line: str) -> str:
         line = self._redact(line.rstrip("\n"))
-        print(line)
-        self._fp.write(line + "\n")
-        self._fp.flush()          # a hung stage must still leave a usable log
+        _safe_print(line)
+        try:
+            self._fp.write(line + "\n")
+            self._fp.flush()      # a hung stage must still leave a usable log
+        except Exception:
+            pass                  # a failing log write must not kill the run
         return line
 
 
@@ -379,8 +393,21 @@ def run_fleet_stage(paths, time_range, timeout_s, log, rm=None,
             # Never kill the holder — only mark the row done. A row left
             # 'running' by a Ctrl-C, a 3h timeout kill, or a reboot would
             # otherwise silence the fleet report until the service restarts.
+            #
+            # Distinguish why: the 24h age backstop in live_run_holders also
+            # reclaims rows whose pid *is* still alive (that backstop exists
+            # precisely because a recycled pid reads as alive), so "pid gone"
+            # would be a lie in that case — the one an operator most needs
+            # worded correctly.
+            pid = r.get("runner_pid")
+            if pid and pid_alive(pid):
+                why = f"pid {pid} still alive — reclaimed on age, not death"
+            elif pid:
+                why = f"pid {pid} gone"
+            else:
+                why = "no pid was ever recorded"
             log(f"[note] reclaimed a stranded runs row {r['id']} "
-                f"(started {r.get('started_at')}, pid {r.get('runner_pid')} gone)")
+                f"(started {r.get('started_at')}, {why})")
             try:
                 repo.mark_interrupted(
                     conn, r["id"],
@@ -586,6 +613,13 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
         if args.no_email:
             # Reaches the fleet stage's runner subprocess, which inherits our env.
             os.environ["SOLAR_NO_EMAIL"] = "1"
+        else:
+            # Authoritative both ways: a machine-scope SOLAR_NO_EMAIL=1 — left
+            # by a `setx` dry run, or present in `.env` (loaded just above) —
+            # would otherwise silently suppress the fleet report on a normal
+            # scheduled run while both collectors still email normally, since
+            # they take suppression from this argv flag, not the environment.
+            os.environ.pop("SOLAR_NO_EMAIL", None)
         lock_path = os.path.join(paths.data_dir, LOCK_NAME)
         # Pass pid_alive explicitly: acquire_lock binds it as a *default
         # argument* at def time, so monkeypatching orch.pid_alive would be a
@@ -597,8 +631,8 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
         # exists because an uncaught raise here would exit 1 — which §13's decode
         # table reads as "fleet failed". Reachable: a full or ACL-denied data
         # volume makes Paths.create's makedirs or the lock's open() throw.
-        print(f"orchestrator failed before staging: {e}\n{traceback.format_exc()}",
-              file=sys.stderr)
+        _safe_print(f"orchestrator failed before staging: {e}\n"
+                    f"{traceback.format_exc()}", sys.stderr)
         return ORCHESTRATOR_FAILED
 
     if not acquired:
@@ -629,7 +663,7 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
             # locked app.db would then produce three missing reports and total
             # silence. `log` is not bound yet, so report independently.
             detail = f"could not open {paths.db_path}: {e}\n{traceback.format_exc()}"
-            print(f"!!! {detail}", file=sys.stderr)
+            _safe_print(f"!!! {detail}", sys.stderr)
             try:
                 with open(log_path, "a", encoding="utf-8") as fp:
                     fp.write(f"!!! {detail}\n")
@@ -647,7 +681,7 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
         with open(log_path, "a", encoding="utf-8") as fp:
             log = Tee(fp, events.Redactor(secrets))
             log(f"=== solar pipeline {stamp} UTC — stages: {', '.join(stages)} ===")
-            if holder:
+            if isinstance(holder, dict) and holder.get("pid"):
                 log(f"[note] reclaimed a stale lock from pid {holder.get('pid')} "
                     f"(started {holder.get('started_at')})")
             if secrets_warning:
@@ -685,7 +719,7 @@ def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
     except Exception as e:
         # Last resort: say so on stdout, in the log if we can, and by email.
         detail = f"{e}\n{traceback.format_exc()}"
-        print(f"orchestrator failed: {detail}", file=sys.stderr)
+        _safe_print(f"orchestrator failed: {detail}", sys.stderr)
         if log_path:
             try:
                 with open(log_path, "a", encoding="utf-8") as fp:
