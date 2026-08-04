@@ -385,3 +385,178 @@ def test_collector_stage_records_a_spawn_failure_as_failed(tmp_path):
                                    _collect(), spawn=boom)
     assert out.status == "failed"
     assert "interpreter not found" in out.detail
+
+
+from solaranalysis.web import crypto, db, repo, run_manager
+from solaranalysis.web.events import EVENT_PREFIX
+
+
+def _fleet_paths(tmp_path):
+    """Paths with an initialized DB and one plant, as the fleet stage needs."""
+    app = tmp_path / "app"; app.mkdir()
+    paths = Paths.create(str(tmp_path / "data"), str(app))
+    conn = db.connect(paths.db_path); db.init_db(conn)
+    key = crypto.load_or_create_key(paths.key_path)
+    repo.create_plant(conn, key, {"name": "Baram", "platform": "growatt",
+                                  "auth_mode": "password", "username": "u",
+                                  "password": "sekret"})
+    conn.close()
+    return paths
+
+
+def _ev(d):
+    return EVENT_PREFIX + json.dumps(d) + "\n"
+
+
+def _rm(paths, lines, code=0):
+    proc = FakeProc(lines, code=code)
+    return run_manager.RunManager(paths, spawn=lambda cmd: proc), proc
+
+
+def test_fleet_stage_success_is_ok(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    rm, _ = _rm(paths, [_ev({"event": "run_complete", "status": "success",
+                             "report_path": "output/x/report.html",
+                             "skipped": [], "plants_summary": [], "notes": {}})])
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=rm)
+    assert out.status == "ok" and out.name == "fleet"
+
+
+def test_fleet_stage_partial_is_ok_not_a_failure(tmp_path):
+    # A partial run emails a report with its own "Unavailable Plants" section,
+    # so the operator already sees the gap. Alerting would be noise.
+    paths = _fleet_paths(tmp_path)
+    rm, _ = _rm(paths, [_ev({"event": "run_complete", "status": "partial",
+                             "report_path": "output/x/report.html",
+                             "skipped": [{"name": "SMA", "reason": "login"}],
+                             "plants_summary": [], "notes": {}})])
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=rm)
+    assert out.status == "ok"
+    assert orch.aggregate_exit_code([out]) == 0
+
+
+def test_fleet_stage_failure_carries_the_runs_row_error_and_log_path(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    rm, _ = _rm(paths, [_ev({"event": "run_complete", "status": "failed",
+                             "error": "AdapterError: portal returned 502"})],
+                code=1)
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=rm)
+    assert out.status == "failed"
+    assert "502" in out.detail
+    # The fleet stage's own output lives in the web app's run log, not ours.
+    assert out.log_ref and out.log_ref.startswith("logs/run-")
+
+
+NOW = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+
+
+def _add_run(paths, *, started_at, pid=None):
+    conn = db.connect(paths.db_path)
+    rid = repo.create_run(conn, trigger="manual", time_range="snapshot",
+                          log_path="logs/run-x.log", started_at=started_at)
+    if pid is not None:
+        repo.set_run_pid(conn, rid, pid)
+    conn.close()
+    return rid
+
+
+def test_fleet_stage_is_skipped_when_a_live_run_is_already_active(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    rid = _add_run(paths, started_at=NOW.isoformat(), pid=1234)
+    log = _collect()
+    out = orch.run_fleet_stage(paths, "snapshot", 5, log, rm=None, now=NOW,
+                               pid_alive=lambda p: True)
+    assert out.status == "skipped"
+    assert orch.aggregate_exit_code([out]) == 0
+    assert any("SKIPPED" in l for l in log.seen)
+    # A live holder must be left strictly alone.
+    conn = db.connect(paths.db_path)
+    assert repo.get_run(conn, rid)["status"] == "running"
+    conn.close()
+
+
+def test_fleet_stage_reclaims_a_stranded_row_and_runs_anyway(tmp_path):
+    # A row left 'running' by a Ctrl-C, a 3h timeout kill, or a reboot must not
+    # silence the fleet report forever.
+    paths = _fleet_paths(tmp_path)
+    rid = _add_run(paths, started_at=(NOW - timedelta(hours=26)).isoformat(),
+                   pid=1234)
+    rm, _ = _rm(paths, [_ev({"event": "run_complete", "status": "success",
+                             "report_path": "output/x/report.html",
+                             "skipped": [], "plants_summary": [], "notes": {}})])
+    log = _collect()
+    out = orch.run_fleet_stage(paths, "snapshot", 5, log, rm=rm, now=NOW,
+                               pid_alive=lambda p: False)
+    assert out.status == "ok", "a stranded row must not block the stage"
+    conn = db.connect(paths.db_path)
+    assert repo.get_run(conn, rid)["status"] == "interrupted"
+    conn.close()
+    assert any("stranded" in l for l in log.seen)
+
+
+def test_fleet_stage_reclaims_a_stranded_row_even_from_a_live_recycled_pid(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    _add_run(paths, started_at=(NOW - timedelta(hours=26)).isoformat(), pid=1234)
+    rm, _ = _rm(paths, [_ev({"event": "run_complete", "status": "success",
+                             "report_path": "output/x/report.html",
+                             "skipped": [], "plants_summary": [], "notes": {}})])
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=rm, now=NOW,
+                               pid_alive=lambda p: True)
+    assert out.status == "ok"
+
+
+def test_fleet_stage_yields_to_a_just_started_run_with_no_pid_yet(tmp_path):
+    # create_run commits status='running' before set_run_pid; reclaiming that
+    # window would start a second concurrent fleet run.
+    paths = _fleet_paths(tmp_path)
+    _add_run(paths, started_at=NOW.isoformat(), pid=None)
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=None, now=NOW,
+                               pid_alive=lambda p: False)
+    assert out.status == "skipped"
+
+
+def test_live_run_holders_splits_live_from_stranded(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    _add_run(paths, started_at=NOW.isoformat(), pid=1234)                  # live
+    _add_run(paths, started_at=NOW.isoformat(), pid=None)                  # starting
+    old = _add_run(paths, started_at=(NOW - timedelta(hours=3)).isoformat(),
+                   pid=None)                                              # stranded
+    conn = db.connect(paths.db_path)
+    live, stranded = orch.live_run_holders(conn, NOW, pid_alive=lambda p: True)
+    conn.close()
+    assert len(live) == 2
+    assert [r["id"] for r in stranded] == [old]
+
+
+def test_fleet_stage_timeout_cancels_the_run(tmp_path, monkeypatch):
+    paths = _fleet_paths(tmp_path)
+    gate = threading.Event()
+    proc = FakeProc([], code=0, block=gate)
+    rm = run_manager.RunManager(paths, spawn=lambda cmd: proc)
+    # RunManager.cancel calls self._kill_tree(proc.pid) — FakeProc.pid is
+    # invented, so never let the real psutil tree-kill run. Same guard as
+    # tests/web/test_run_manager_cancel.py; patch the instance, not the class.
+    monkeypatch.setattr(rm, "_kill_tree", lambda pid: None)
+    cancelled = []
+    real_cancel = rm.cancel
+
+    def spy(rid):
+        cancelled.append(rid)
+        gate.set()                       # let the fake process finish
+        return real_cancel(rid)
+    rm.cancel = spy
+    out = orch.run_fleet_stage(paths, "snapshot", 0.05, _collect(), rm=rm,
+                               now=NOW, pid_alive=lambda p: False)
+    assert out.status == "timeout"
+    assert cancelled, "a run past its timeout must be cancelled, not left running"
+
+
+def test_fleet_stage_records_a_busy_run_manager_as_failed(tmp_path):
+    paths = _fleet_paths(tmp_path)
+
+    class Busy:
+        def start_run(self, *a, **k):
+            raise run_manager.Busy({"kind": "test", "id": 3})
+    out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=Busy())
+    assert out.status == "failed"
+    assert "operation active" in out.detail or "Busy" in out.detail

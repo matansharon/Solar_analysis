@@ -20,6 +20,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from .web import crypto, db, repo, run_manager
+from .web.paths import Paths
+
 ALL_STAGES = ("fleet", "optimizers", "strings")
 STAGE_BITS = {"fleet": 1, "optimizers": 2, "strings": 4}
 ORCHESTRATOR_FAILED = 8          # lock held, bad arguments, or a pre-stage error
@@ -325,3 +328,108 @@ def run_collector_stage(name, paths, timeout_s, no_email, log,
     log(f"!!! stage {name}: FAILED exit {code} ({duration:.0f}s)")
     return StageOutcome(name, "failed", exit_code=code, duration_s=duration,
                         detail=detail)
+
+
+CANCEL_GRACE_S = 30          # let _finish() write "cancelled" after a kill
+# A `running` row younger than this is presumed live even with no pid recorded:
+# create_run commits before set_run_pid, so a starting run has a pidless window.
+STRANDED_RUN_GRACE_MIN = 15
+
+
+def live_run_holders(conn, now, pid_alive=pid_alive,
+                     grace_min=STRANDED_RUN_GRACE_MIN):
+    """Split `status='running'` rows into (live, stranded).
+
+    Live: a recorded pid that is still alive, or any row inside the grace
+    window — including one with no pid yet. Stranded: everything older than the
+    window whose pid is gone or was never recorded. Age is also the backstop for
+    a recycled pid, which `pid_exists` would wrongly call alive."""
+    live, stranded = [], []
+    for r in repo.running_runs(conn):
+        try:
+            age = now - datetime.fromisoformat(str(r.get("started_at")))
+        except (TypeError, ValueError):
+            age = timedelta(days=365)          # unusable timestamp -> stranded
+        fresh = age <= timedelta(minutes=grace_min)
+        pid = r.get("runner_pid")
+        if fresh or (pid and pid_alive(pid) and age <= timedelta(hours=24)):
+            live.append(r)
+        else:
+            stranded.append(r)
+    return live, stranded
+
+
+def run_fleet_stage(paths, time_range, timeout_s, log, rm=None,
+                    clock=time.monotonic, now=None,
+                    pid_alive=pid_alive) -> StageOutcome:
+    """Drive the fleet run through the web app's RunManager, so a scheduled run
+    creates a normal `runs` row and still appears in run history. Short-lived
+    connections only: the pump writes from another thread on its own
+    connection."""
+    started = clock()
+    now = now or datetime.now(timezone.utc)
+    conn = db.connect(paths.db_path)
+    try:
+        active, stranded = live_run_holders(conn, now, pid_alive=pid_alive)
+        for r in stranded:
+            # Never kill the holder — only mark the row done. A row left
+            # 'running' by a Ctrl-C, a 3h timeout kill, or a reboot would
+            # otherwise silence the fleet report until the service restarts.
+            log(f"[note] reclaimed a stranded runs row {r['id']} "
+                f"(started {r.get('started_at')}, pid {r.get('runner_pid')} gone)")
+            try:
+                repo.mark_interrupted(
+                    conn, r["id"],
+                    finished_at=now.isoformat(timespec="seconds"))
+            except Exception as e:
+                log(f"[warn] could not reclaim runs row {r['id']}: {e}")
+    finally:
+        conn.close()
+    if active:
+        ids = ", ".join(str(r["id"]) for r in active)
+        log(f"!!! stage fleet: SKIPPED — run(s) {ids} already active. Is a "
+            f"Settings -> Schedules row or the web UI driving a run? "
+            f"DEPLOYMENT.md §13 says there should be no schedule row.")
+        return StageOutcome("fleet", "skipped", duration_s=clock() - started,
+                            detail=f"run(s) {ids} were already active")
+
+    rm = rm if rm is not None else run_manager.RunManager(paths)
+    log(f"--- stage fleet: starting ({time_range}) ---")
+    try:
+        rid = rm.start_run("scheduled", time_range)
+    except Exception as e:
+        log(f"!!! stage fleet: could not start: {e}")
+        return StageOutcome("fleet", "failed", duration_s=clock() - started,
+                            detail=f"could not start: {e}")
+
+    log(f"--- stage fleet: run {rid} — detail in logs/run-{rid}.log ---")
+    rm.join(rid, timeout=timeout_s)
+    act = rm.active()
+    timed_out = bool(act and act.get("id") == rid)
+    if timed_out:
+        log(f"!!! stage fleet: TIMED OUT after {timeout_s / 60:.0f} min — "
+            f"cancelling run {rid}")
+        rm.cancel(rid)
+        rm.join(rid, timeout=CANCEL_GRACE_S)
+
+    conn = db.connect(paths.db_path)
+    try:
+        run = repo.get_run(conn, rid) or {}
+    finally:
+        conn.close()
+    status = run.get("status")
+    duration = clock() - started
+    log_ref = run.get("log_path")
+    if timed_out:
+        return StageOutcome("fleet", "timeout", duration_s=duration,
+                            detail=run.get("error") or f"run {rid} cancelled "
+                                                       f"after timeout",
+                            log_ref=log_ref)
+    if status in ("success", "partial"):
+        log(f"--- stage fleet: {status} ({duration:.0f}s) ---")
+        return StageOutcome("fleet", "ok", exit_code=0, duration_s=duration,
+                            detail=f"run {rid} {status}", log_ref=log_ref)
+    log(f"!!! stage fleet: FAILED — run {rid} ended '{status}' ({duration:.0f}s)")
+    return StageOutcome("fleet", "failed", duration_s=duration,
+                        detail=run.get("error") or f"run {rid} ended '{status}'",
+                        log_ref=log_ref)
