@@ -11,6 +11,7 @@ docs/superpowers/specs/2026-08-04-scheduled-pipeline-design.md
 """
 from __future__ import annotations
 import argparse
+import html as _html
 import json
 import os
 import subprocess
@@ -20,7 +21,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .web import crypto, db, repo, run_manager
+from .web import crypto, db, mailer, repo, run_manager
 from .web.paths import Paths
 
 ALL_STAGES = ("fleet", "optimizers", "strings")
@@ -433,3 +434,97 @@ def run_fleet_stage(paths, time_range, timeout_s, log, rm=None,
     return StageOutcome("fleet", "failed", duration_s=duration,
                         detail=run.get("error") or f"run {rid} ended '{status}'",
                         log_ref=log_ref)
+
+
+_STATUS_COLOR = {"ok": "#1a7f37", "skipped": "#9a6700",
+                 "failed": "#b42318", "timeout": "#b42318"}
+
+
+def resolve_recipients() -> list[str]:
+    """PIPELINE_RECIPIENTS overrides the app's configured list — the same
+    pattern as OPTIMIZER_RECIPIENTS and STRING_RECIPIENTS."""
+    raw = os.getenv("PIPELINE_RECIPIENTS", "").strip()
+    if not raw:
+        return mailer.recipients()
+    out, seen = [], set()
+    for part in raw.split(","):
+        addr = part.strip()
+        if addr and addr not in seen:
+            seen.add(addr)
+            out.append(addr)
+    return out
+
+
+def should_alert(outcomes, no_email: bool) -> bool:
+    """Only a real failure. A `partial` fleet run already emailed a report that
+    names its own gaps, and a skipped stage means the work is happening
+    elsewhere."""
+    return (not no_email) and any(o.failed for o in outcomes)
+
+
+def alert_subject(outcomes, stamp: str) -> str:
+    bad = ", ".join(o.name for o in outcomes if o.failed)
+    return f"Solar pipeline · FAILED · {bad} · {stamp} UTC"
+
+
+def compose_alert_html(outcomes, log_path: str, stamp: str) -> str:
+    """Inline styles only: Outlook and Gmail ignore the on-disk report's CSS
+    variables, the same constraint render_email_html works around."""
+    esc = _html.escape
+    rows = []
+    for o in outcomes:
+        color = _STATUS_COLOR.get(o.status, "#57606a")
+        code = "—" if o.exit_code is None else str(o.exit_code)
+        rows.append(
+            f'<tr><td style="padding:6px 12px;border-bottom:1px solid #d8dee4">'
+            f'{esc(o.name)}</td>'
+            f'<td style="padding:6px 12px;border-bottom:1px solid #d8dee4;'
+            f'color:{color};font-weight:600">{esc(o.status)}</td>'
+            f'<td style="padding:6px 12px;border-bottom:1px solid #d8dee4;'
+            f'text-align:right">{esc(code)}</td>'
+            f'<td style="padding:6px 12px;border-bottom:1px solid #d8dee4;'
+            f'text-align:right">{o.duration_s:.0f}s</td></tr>')
+    details = []
+    for o in outcomes:
+        if not (o.failed and (o.detail or o.log_ref)):
+            continue
+        ref = (f'<div style="color:#57606a;font-size:13px">also: '
+               f'{esc(o.log_ref)}</div>' if o.log_ref else "")
+        details.append(
+            f'<h3 style="font:600 15px system-ui;margin:18px 0 6px">'
+            f'{esc(o.name)}</h3>{ref}'
+            f'<pre style="background:#f6f8fa;border:1px solid #d8dee4;'
+            f'border-radius:6px;padding:10px;font:12px/1.45 Consolas,monospace;'
+            f'white-space:pre-wrap;overflow-x:auto">{esc(o.detail)}</pre>')
+    return (
+        f'<div style="font:14px/1.5 system-ui,Segoe UI,sans-serif;color:#1f2328;'
+        f'max-width:760px">'
+        f'<h2 style="font:600 18px system-ui;margin:0 0 4px">'
+        f'Solar pipeline failed</h2>'
+        f'<div style="color:#57606a;margin-bottom:14px">{esc(stamp)} UTC</div>'
+        f'<table style="border-collapse:collapse;width:100%;'
+        f'border:1px solid #d8dee4;border-radius:6px">'
+        f'<tr style="background:#f6f8fa">'
+        f'<th style="padding:6px 12px;text-align:left">stage</th>'
+        f'<th style="padding:6px 12px;text-align:left">outcome</th>'
+        f'<th style="padding:6px 12px;text-align:right">exit</th>'
+        f'<th style="padding:6px 12px;text-align:right">took</th></tr>'
+        f'{"".join(rows)}</table>'
+        f'{"".join(details)}'
+        f'<div style="color:#57606a;font-size:13px;margin-top:16px">'
+        f'full log: {esc(log_path)}</div></div>')
+
+
+def send_alert(outcomes, log_path, stamp, send=None):
+    """(sent, message_to_log). Never raises: an alert problem must not change
+    the exit code that describes the actual work."""
+    to = resolve_recipients()
+    if not (mailer.is_configured() and to):
+        return False, "alert not sent: email not configured"
+    try:
+        (send or mailer.send_report)(alert_subject(outcomes, stamp),
+                                     compose_alert_html(outcomes, log_path, stamp),
+                                     to=to)
+        return True, f"alert emailed to {', '.join(to)}"
+    except Exception as e:
+        return False, f"alert email failed: {e}"

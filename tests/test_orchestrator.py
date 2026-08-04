@@ -560,3 +560,92 @@ def test_fleet_stage_records_a_busy_run_manager_as_failed(tmp_path):
     out = orch.run_fleet_stage(paths, "snapshot", 5, _collect(), rm=Busy())
     assert out.status == "failed"
     assert "operation active" in out.detail or "Busy" in out.detail
+
+
+def _failed(name, detail="boom", code=1):
+    return orch.StageOutcome(name, "failed", exit_code=code, duration_s=12.0,
+                             detail=detail)
+
+
+def test_should_alert_only_on_a_real_failure():
+    ok = [_outcome("fleet", "ok"), _outcome("strings", "ok")]
+    assert orch.should_alert(ok, no_email=False) is False
+    assert orch.should_alert([_failed("strings")], no_email=False) is True
+    assert orch.should_alert([_outcome("optimizers", "timeout")],
+                            no_email=False) is True
+
+
+def test_should_alert_is_quiet_for_skipped_and_under_no_email():
+    assert orch.should_alert([_outcome("fleet", "skipped")], no_email=False) is False
+    assert orch.should_alert([_failed("strings")], no_email=True) is False
+
+
+def test_alert_subject_names_the_failing_stages():
+    subj = orch.alert_subject([_outcome("fleet", "ok"), _failed("strings"),
+                               _failed("optimizers")], "20260805-060000")
+    assert "FAILED" in subj
+    assert "strings" in subj and "optimizers" in subj
+    assert "fleet" not in subj
+    assert "20260805-060000" in subj
+
+
+def test_alert_body_lists_every_stage_and_the_failed_stages_evidence():
+    outcomes = [orch.StageOutcome("fleet", "ok", exit_code=0, duration_s=90.0,
+                                  detail="run 12 partial",
+                                  log_ref="logs/run-12.log"),
+                _failed("optimizers", detail="Traceback: 401 unauthorized", code=3)]
+    html = orch.compose_alert_html(outcomes, "data/logs/pipeline-x.log",
+                                   "20260805-060000")
+    assert "fleet" in html and "optimizers" in html      # every stage listed
+    assert "401 unauthorized" in html                    # the actionable part
+    assert "pipeline-x.log" in html                      # where to look next
+    assert "style=" in html                              # Outlook/Gmail safe
+
+
+def test_alert_body_escapes_html_in_a_stage_detail():
+    html = orch.compose_alert_html([_failed("strings", detail="<script>x</script>")],
+                                   "p.log", "20260805-060000")
+    assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_recipients_prefer_pipeline_over_report(monkeypatch):
+    monkeypatch.setenv("REPORT_RECIPIENTS", "fleet@example.com")
+    monkeypatch.setenv("PIPELINE_RECIPIENTS", "ops@example.com, ops@example.com ,"
+                                              "oncall@example.com")
+    assert orch.resolve_recipients() == ["ops@example.com", "oncall@example.com"]
+
+
+def test_recipients_fall_back_to_the_apps_configured_list(monkeypatch):
+    monkeypatch.setenv("REPORT_RECIPIENTS", "fleet@example.com")
+    assert orch.resolve_recipients() == ["fleet@example.com"]
+
+
+def test_send_alert_skips_cleanly_when_email_is_not_configured():
+    sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000",
+                                send=lambda *a, **k: None)
+    assert sent is False and "not configured" in msg
+
+
+def test_send_alert_sends_to_the_resolved_recipients(monkeypatch):
+    for k in ("GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_CLIENT_SECRET",
+              "GRAPH_SENDER"):
+        monkeypatch.setenv(k, "x")
+    monkeypatch.setenv("PIPELINE_RECIPIENTS", "ops@example.com")
+    calls = []
+    sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000",
+                                send=lambda s, b, to=None: calls.append((s, b, to)))
+    assert sent is True and "ops@example.com" in msg
+    assert calls and calls[0][2] == ["ops@example.com"]
+
+
+def test_send_alert_swallows_a_send_failure(monkeypatch):
+    for k in ("GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_CLIENT_SECRET",
+              "GRAPH_SENDER"):
+        monkeypatch.setenv(k, "x")
+    monkeypatch.setenv("PIPELINE_RECIPIENTS", "ops@example.com")
+
+    def boom(*a, **k):
+        raise RuntimeError("Graph sendMail failed 403")
+    sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000",
+                                send=boom)
+    assert sent is False and "403" in msg
