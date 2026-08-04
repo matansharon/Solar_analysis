@@ -172,3 +172,90 @@ def test_force_utf8_is_a_noop_on_a_stream_that_cannot_reconfigure():
     # UnicodeEncodeError that reads like a collection failure. A stream that
     # can't be reconfigured must not raise.
     orch.force_utf8(io.StringIO())
+
+
+import json
+
+
+def test_acquire_lock_writes_our_pid_when_free(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    acquired, holder = orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False)
+    assert acquired is True and holder is None
+    payload = json.loads(open(path, encoding="utf-8").read())
+    assert payload["pid"] == 1234 and payload["started_at"]
+
+
+def test_acquire_lock_refuses_while_the_holder_is_alive(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False)
+    acquired, holder = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: True)
+    assert acquired is False
+    assert holder["pid"] == 1234
+    # The live holder's lock must survive our refusal.
+    assert json.loads(open(path, encoding="utf-8").read())["pid"] == 1234
+
+
+def test_acquire_lock_reclaims_a_stale_lock_and_reports_the_dead_holder(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False)
+    acquired, holder = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: False)
+    assert acquired is True
+    assert holder["pid"] == 1234          # so the caller can log who died
+    assert json.loads(open(path, encoding="utf-8").read())["pid"] == 5678
+
+
+def test_acquire_lock_reclaims_a_corrupt_lock_file(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    open(path, "w", encoding="utf-8").write("not json")
+    acquired, holder = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: True)
+    assert acquired is True and holder == {}
+
+
+def test_acquire_lock_reclaims_an_expired_lock_even_from_a_live_pid(tmp_path):
+    # The 3h ExecutionTimeLimit strands the lock holding our own pid; Windows
+    # can then recycle that pid to a live service, which would otherwise block
+    # the pipeline forever with no notification.
+    path = str(tmp_path / "pipeline.lock")
+    t0 = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False, now=t0)
+    later = t0 + timedelta(hours=orch.MAX_LOCK_AGE_H, minutes=1)
+    acquired, holder = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: True,
+                                        now=later)
+    assert acquired is True
+    assert holder["pid"] == 1234
+    assert json.loads(open(path, encoding="utf-8").read())["pid"] == 5678
+
+
+def test_acquire_lock_still_yields_to_a_live_holder_inside_the_age_window(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    t0 = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False, now=t0)
+    acquired, _ = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: True,
+                                    now=t0 + timedelta(hours=2))
+    assert acquired is False
+
+
+def test_acquire_lock_treats_a_missing_or_skewed_timestamp_as_stale(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    now = datetime(2026, 8, 4, 6, 0, 0, tzinfo=timezone.utc)
+    for payload in ({"pid": 1234},                       # no started_at
+                    {"pid": 1234, "started_at": "garbage"},
+                    {"pid": 1234, "started_at": "2027-01-01T00:00:00+00:00"}):
+        with open(path, "w", encoding="utf-8") as fp:
+            json.dump(payload, fp)
+        acquired, _ = orch.acquire_lock(path, pid=5678, pid_alive=lambda p: True,
+                                        now=now)
+        assert acquired is True, f"unusable timestamp must not block: {payload}"
+
+
+def test_release_lock_removes_only_our_own(tmp_path):
+    path = str(tmp_path / "pipeline.lock")
+    orch.acquire_lock(path, pid=1234, pid_alive=lambda p: False)
+    assert orch.release_lock(path, pid=5678) is False
+    assert os.path.exists(path)
+    assert orch.release_lock(path, pid=1234) is True
+    assert not os.path.exists(path)
+
+
+def test_release_lock_is_safe_when_the_file_is_already_gone(tmp_path):
+    assert orch.release_lock(str(tmp_path / "pipeline.lock"), pid=1234) is False

@@ -11,6 +11,7 @@ docs/superpowers/specs/2026-08-04-scheduled-pipeline-design.md
 """
 from __future__ import annotations
 import argparse
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -153,3 +154,71 @@ def prune_logs(logs_dir: str, retention_days: int, now=None) -> list[str]:
             except OSError:
                 continue                  # locked or already gone; not fatal
     return removed
+
+
+LOCK_NAME = "pipeline.lock"
+# Exceeds §13's 3h ExecutionTimeLimit (which is what strands a lock) and stays
+# under the 24h schedule interval, so the next run always recovers.
+MAX_LOCK_AGE_H = 12
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False              # can't tell -> treat as dead, same as RunManager
+
+
+def _lock_expired(holder, now) -> bool:
+    """True when the holder's timestamp is older than MAX_LOCK_AGE_H, or is
+    missing, unparseable, or in the future. An unusable timestamp must read as
+    stale — never as infinite age, which would block the pipeline forever."""
+    raw = (holder or {}).get("started_at")
+    try:
+        when = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    if when > now:                      # clock skew / DST: don't trust it
+        return True
+    return (now - when) > timedelta(hours=MAX_LOCK_AGE_H)
+
+
+def acquire_lock(path: str, pid=None, pid_alive=pid_alive, now=None):
+    """Take the overlap lock. Returns (acquired, holder). `-StartWhenAvailable`
+    plus a slow run can otherwise re-enter while the previous one is still
+    working. A dead — or merely expired — holder's lock is reclaimed and
+    returned so the caller can log who died."""
+    pid = os.getpid() if pid is None else pid
+    now = now or datetime.now(timezone.utc)
+    holder = None
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as fp:
+                holder = json.loads(fp.read())
+        except Exception:
+            holder = {}             # corrupt: treat as stale, not as a blocker
+        hpid = holder.get("pid") if isinstance(holder, dict) else None
+        if (isinstance(hpid, int) and hpid != pid and pid_alive(hpid)
+                and not _lock_expired(holder, now)):
+            return False, holder
+    payload = {"pid": pid, "started_at": now.isoformat(timespec="seconds")}
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp)
+    return True, holder
+
+
+def release_lock(path: str, pid=None) -> bool:
+    """Remove the lock only if we still hold it, so a reclaimed-from-us lock
+    isn't deleted out from under its new owner."""
+    pid = os.getpid() if pid is None else pid
+    try:
+        with open(path, encoding="utf-8") as fp:
+            if json.loads(fp.read()).get("pid") != pid:
+                return False
+        os.remove(path)
+        return True
+    except Exception:
+        return False
