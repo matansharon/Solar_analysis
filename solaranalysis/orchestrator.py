@@ -13,7 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -222,3 +225,103 @@ def release_lock(path: str, pid=None) -> bool:
         return True
     except Exception:
         return False
+
+
+def kill_tree(pid) -> None:
+    """Kill a stage and its children. A Playwright stage leaves a Chromium
+    behind if only the parent is killed.
+
+    Deliberately a near-copy of RunManager._kill_tree rather than a call to it:
+    that one is a private method on a web-layer class, and reaching into it
+    would couple this module to RunManager's internals for ten lines."""
+    if not pid:
+        return
+    try:
+        import psutil
+        parent = psutil.Process(pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+        parent.kill()
+    except Exception:
+        pass
+
+
+def _default_spawn(cmd):
+    # Parallel to run_manager._default_spawn, not a reuse of it: that one is
+    # private, and this one must add env= (see below), which it does not.
+    #
+    # PYTHONIOENCODING for the child mirrors force_utf8() for ourselves: the
+    # collectors print Hebrew narratives and a "·" in their subject lines.
+    # "utf-8:replace" — not bare "utf-8", which gives the child errors="strict"
+    # so an unencodable surrogate still raises. This matches force_utf8()'s own
+    # errors="replace" and the parent pipe's.
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            encoding="utf-8", errors="replace",
+                            env=dict(os.environ,
+                                     PYTHONIOENCODING="utf-8:replace"))
+
+
+def build_collector_cmd(name: str, paths, no_email: bool) -> list[str]:
+    cmd = [sys.executable, "-m", STAGE_MODULES[name],
+           "--data-dir", paths.data_dir, "--app-dir", paths.app_dir]
+    if no_email:
+        cmd.append("--no-email")
+    return cmd
+
+
+def run_collector_stage(name, paths, timeout_s, no_email, log,
+                        spawn=None, clock=time.monotonic) -> StageOutcome:
+    """Run one collector as its own process, tee-ing its output. A watchdog
+    kills the tree on timeout — the stdout iteration below has no timeout of
+    its own, so a stage that hangs mid-stream would otherwise block forever.
+    Same watchdog approach as RunManager.run_test."""
+    started = clock()
+    log(f"--- stage {name}: starting ---")
+    try:
+        proc = (spawn or _default_spawn)(build_collector_cmd(name, paths, no_email))
+    except Exception as e:
+        log(f"!!! stage {name}: could not start: {e}")
+        return StageOutcome(name, "failed", duration_s=clock() - started,
+                            detail=f"could not start: {e}")
+
+    fired = threading.Event()
+
+    def _fire():
+        fired.set()
+        kill_tree(getattr(proc, "pid", None))
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(timeout_s, _fire)
+    watchdog.start()
+    tail: list[str] = []
+    code = None
+    try:
+        for raw in proc.stdout or []:
+            tail.append(log(raw))
+            del tail[:-TAIL_LINES]
+        code = proc.wait()
+    except Exception as e:
+        tail.append(log(f"!!! stage {name}: reading output failed: {e}"))
+    finally:
+        watchdog.cancel()
+
+    duration = clock() - started
+    detail = "\n".join(tail)
+    if fired.is_set():
+        log(f"!!! stage {name}: TIMED OUT after {timeout_s / 60:.0f} min — killed")
+        return StageOutcome(name, "timeout", exit_code=code, duration_s=duration,
+                            detail=detail)
+    if code == 0:
+        log(f"--- stage {name}: ok ({duration:.0f}s) ---")
+        return StageOutcome(name, "ok", exit_code=0, duration_s=duration,
+                            detail=detail)
+    log(f"!!! stage {name}: FAILED exit {code} ({duration:.0f}s)")
+    return StageOutcome(name, "failed", exit_code=code, duration_s=duration,
+                        detail=detail)

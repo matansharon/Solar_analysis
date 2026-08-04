@@ -259,3 +259,129 @@ def test_release_lock_removes_only_our_own(tmp_path):
 
 def test_release_lock_is_safe_when_the_file_is_already_gone(tmp_path):
     assert orch.release_lock(str(tmp_path / "pipeline.lock"), pid=1234) is False
+
+
+import sys
+import threading
+
+from solaranalysis.web.paths import Paths
+
+
+class FakeProc:
+    """Same shape as run_manager's Popen: .stdout lines, .wait(), .pid."""
+
+    def __init__(self, lines, code=0, block=None):
+        self.stdout = iter(lines)
+        self.pid = 4242
+        self._code = code
+        self._block = block          # threading.Event held open by wait()
+        self.killed = False
+
+    def wait(self):
+        if self._block is not None:
+            self._block.wait(timeout=5)
+        return self._code
+
+    def kill(self):
+        self.killed = True
+        if self._block is not None:
+            self._block.set()
+
+
+def _paths(tmp_path):
+    app = tmp_path / "app"; app.mkdir()
+    return Paths.create(str(tmp_path / "data"), str(app))
+
+
+def _collect(lines=None):
+    """A log sink that records what it was handed."""
+    seen = lines if lines is not None else []
+
+    def log(line):
+        line = line.rstrip("\n")
+        seen.append(line)
+        return line
+    log.seen = seen
+    return log
+
+
+def test_collector_cmd_passes_the_dirs_and_omits_no_email_by_default(tmp_path):
+    paths = _paths(tmp_path)
+    cmd = orch.build_collector_cmd("strings", paths, no_email=False)
+    assert cmd[:3] == [sys.executable, "-m", "solaranalysis.strings"]
+    assert "--data-dir" in cmd and paths.data_dir in cmd
+    assert "--app-dir" in cmd and paths.app_dir in cmd
+    assert "--no-email" not in cmd
+
+
+def test_collector_cmd_forwards_no_email(tmp_path):
+    cmd = orch.build_collector_cmd("optimizers", _paths(tmp_path), no_email=True)
+    assert cmd[2] == "solaranalysis.optimizers"
+    assert "--no-email" in cmd
+
+
+def test_collector_stage_exit_zero_is_ok(tmp_path):
+    log = _collect()
+    proc = FakeProc(["MZHRF6K002 2026-08-03: 18 channels\n"], code=0)
+    out = orch.run_collector_stage("strings", _paths(tmp_path), 60, False, log,
+                                   spawn=lambda cmd: proc)
+    assert out.status == "ok" and out.exit_code == 0 and out.name == "strings"
+    assert any("18 channels" in l for l in log.seen)
+
+
+def test_collector_stage_streams_every_line_through_the_log(tmp_path):
+    log = _collect()
+    proc = FakeProc(["one\n", "two\n", "three\n"], code=0)
+    orch.run_collector_stage("strings", _paths(tmp_path), 60, False, log,
+                             spawn=lambda cmd: proc)
+    assert ["one", "two", "three"] == [l for l in log.seen
+                                       if l in ("one", "two", "three")]
+
+
+def test_collector_stage_maps_every_nonzero_exit_to_failed(tmp_path):
+    # 2 = no enabled plant in app.db, 3 = empty/unauthorized list, 4 = a day
+    # failed. On a server past DEPLOYMENT.md §10 all three are regressions.
+    # One Paths for the whole loop: _paths() does a bare app.mkdir(), so
+    # calling it per iteration raises FileExistsError on the second pass.
+    paths = _paths(tmp_path)
+    for code in (1, 2, 3, 4):
+        out = orch.run_collector_stage(
+            "optimizers", paths, 60, False, _collect(),
+            spawn=lambda cmd, c=code: FakeProc(["boom\n"], code=c))
+        assert out.status == "failed" and out.exit_code == code
+
+
+def test_collector_stage_keeps_a_bounded_tail_for_the_alert(tmp_path):
+    lines = [f"line {i}\n" for i in range(50)]
+    out = orch.run_collector_stage(
+        "strings", _paths(tmp_path), 60, False, _collect(),
+        spawn=lambda cmd: FakeProc(lines, code=4))
+    tail = out.detail.splitlines()
+    assert len(tail) == orch.TAIL_LINES
+    assert tail[-1] == "line 49"
+
+
+def test_collector_stage_times_out_and_kills_the_process(tmp_path, monkeypatch):
+    # kill_tree must be stubbed: FakeProc.pid is invented. Windows pids are
+    # multiples of 4, so 4242 cannot exist there — but the suite must never run
+    # a real kill against a fabricated pid, and it may run off-Windows, where
+    # pids are sequential and 4242 is entirely plausible.
+    killed = []
+    monkeypatch.setattr(orch, "kill_tree", killed.append)
+    gate = threading.Event()
+    proc = FakeProc([], code=0, block=gate)
+    out = orch.run_collector_stage(
+        "strings", _paths(tmp_path), 0.05, False, _collect(),
+        spawn=lambda cmd: proc)
+    assert out.status == "timeout"
+    assert killed == [4242] and proc.killed is True
+    gate.set()
+
+
+def test_collector_stage_records_a_spawn_failure_as_failed(tmp_path):
+    def boom(cmd):
+        raise OSError("interpreter not found")
+    out = orch.run_collector_stage("strings", _paths(tmp_path), 60, False,
+                                   _collect(), spawn=boom)
+    assert out.status == "failed"
+    assert "interpreter not found" in out.detail
