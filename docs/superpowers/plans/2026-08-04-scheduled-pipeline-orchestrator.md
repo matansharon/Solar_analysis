@@ -851,7 +851,11 @@ Add after `release_lock`:
 ```python
 def kill_tree(pid) -> None:
     """Kill a stage and its children. A Playwright stage leaves a Chromium
-    behind if only the parent is killed. Same approach as RunManager._kill_tree."""
+    behind if only the parent is killed.
+
+    Deliberately a near-copy of RunManager._kill_tree rather than a call to it:
+    that one is a private method on a web-layer class, and reaching into it
+    would couple this module to RunManager's internals for ten lines."""
     if not pid:
         return
     try:
@@ -868,6 +872,9 @@ def kill_tree(pid) -> None:
 
 
 def _default_spawn(cmd):
+    # Parallel to run_manager._default_spawn, not a reuse of it: that one is
+    # private, and this one must add env= (see below), which it does not.
+    #
     # PYTHONIOENCODING for the child mirrors force_utf8() for ourselves: the
     # collectors print Hebrew narratives and a "·" in their subject lines.
     # "utf-8:replace" — not bare "utf-8", which gives the child errors="strict"
@@ -1756,7 +1763,7 @@ def test_main_runs_only_the_selected_stages(tmp_path):
     assert ran == ["strings"]
 
 
-def test_main_rejects_an_unknown_stage_with_8(tmp_path, capsys):
+def test_main_rejects_an_unknown_stage_with_8(tmp_path):
     (tmp_path / "app").mkdir()
     assert orch.main(_main_args(tmp_path, "--only", "inverters")) == \
         orch.ORCHESTRATOR_FAILED
