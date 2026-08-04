@@ -649,3 +649,21 @@ def test_send_alert_swallows_a_send_failure(monkeypatch):
     sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000",
                                 send=boom)
     assert sent is False and "403" in msg
+
+
+def test_send_alert_never_raises_even_when_resolve_recipients_fails(monkeypatch):
+    def boom():
+        raise RuntimeError("recipient resolver failed")
+    monkeypatch.setattr(orch, "resolve_recipients", boom)
+    sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000")
+    assert sent is False and "recipient resolver failed" in msg
+
+
+def test_send_alert_distinguishes_no_recipients_from_unconfigured(monkeypatch):
+    monkeypatch.setenv("GRAPH_TENANT_ID", "x")
+    monkeypatch.setenv("GRAPH_CLIENT_ID", "x")
+    monkeypatch.setenv("GRAPH_CLIENT_SECRET", "x")
+    monkeypatch.setenv("GRAPH_SENDER", "x")
+    # PIPELINE_RECIPIENTS and REPORT_RECIPIENTS both unset, so no recipients
+    sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000")
+    assert sent is False and "no recipients" in msg

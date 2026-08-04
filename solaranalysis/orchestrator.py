@@ -518,10 +518,12 @@ def compose_alert_html(outcomes, log_path: str, stamp: str) -> str:
 def send_alert(outcomes, log_path, stamp, send=None):
     """(sent, message_to_log). Never raises: an alert problem must not change
     the exit code that describes the actual work."""
-    to = resolve_recipients()
-    if not (mailer.is_configured() and to):
-        return False, "alert not sent: email not configured"
     try:
+        to = resolve_recipients()
+        if not mailer.is_configured():
+            return False, "alert not sent: email not configured"
+        if not to:
+            return False, "alert not sent: no recipients configured"
         (send or mailer.send_report)(alert_subject(outcomes, stamp),
                                      compose_alert_html(outcomes, log_path, stamp),
                                      to=to)
