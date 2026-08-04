@@ -18,10 +18,13 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .web import crypto, db, mailer, repo, run_manager
+from dotenv import load_dotenv
+
+from .web import crypto, db, events, mailer, repo, run_manager
 from .web.paths import Paths
 
 ALL_STAGES = ("fleet", "optimizers", "strings")
@@ -530,3 +533,183 @@ def send_alert(outcomes, log_path, stamp, send=None):
         return True, f"alert emailed to {', '.join(to)}"
     except Exception as e:
         return False, f"alert email failed: {e}"
+
+
+def collect_secrets(paths):
+    """(secrets, warning). Redaction seed: every stored plant credential plus
+    GRAPH_CLIENT_SECRET. Best-effort — a DB problem degrades redaction but must
+    not stop the run, so it is reported as a warning to log, not raised."""
+    out, warning = [], None
+    try:
+        conn = db.connect(paths.db_path)
+        try:
+            key = crypto.load_or_create_key(paths.key_path)
+            for p in repo.list_plants(conn):
+                auth = repo.load_plant_auth(conn, key, p["id"])
+                if auth and auth.password:
+                    out.append(auth.password)
+                if auth and auth.token:
+                    out.append(auth.token)
+        finally:
+            conn.close()
+    except Exception as e:
+        warning = f"could not load credentials for log redaction: {e}"
+    secret = os.getenv("GRAPH_CLIENT_SECRET")
+    if secret:
+        out.append(secret)
+    return out, warning
+
+
+def main(argv=None, now=None, fleet=None, collector=None, alert=None) -> int:
+    force_utf8()
+    # force_utf8() covers our own streams; this covers every child's. The fleet
+    # runner is spawned by RunManager._default_spawn, which passes no env=, so
+    # it inherits ours — this is what makes §13's "no PYTHONIOENCODING needed"
+    # true for all three stages. Unconditional assignment, never setdefault: a
+    # leftover machine-scope cp1255 from the §11/§12 era would otherwise win.
+    os.environ["PYTHONIOENCODING"] = "utf-8:replace"
+    args = _build_parser().parse_args(argv)
+    try:
+        stages = parse_only(args.only)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return ORCHESTRATOR_FAILED
+
+    # utc_stamp does no I/O, so it is safe out here — and the handlers below
+    # reference `stamp`, so it must be bound before anything can raise.
+    stamp = utc_stamp(now() if callable(now) else now)
+    lock_path = None
+    log_path = None
+    try:
+        paths = Paths.create(args.data_dir, args.app_dir)
+        load_dotenv(paths.env_file)
+        if args.no_email:
+            # Reaches the fleet stage's runner subprocess, which inherits our env.
+            os.environ["SOLAR_NO_EMAIL"] = "1"
+        lock_path = os.path.join(paths.data_dir, LOCK_NAME)
+        # Pass pid_alive explicitly: acquire_lock binds it as a *default
+        # argument* at def time, so monkeypatching orch.pid_alive would be a
+        # no-op. Naming it here makes the module global resolve at call time,
+        # which is what the lock-held test patches. Same object in production.
+        acquired, holder = acquire_lock(lock_path, pid_alive=pid_alive)
+    except Exception as e:
+        # No log file can exist yet, so stderr is the only channel. This guard
+        # exists because an uncaught raise here would exit 1 — which §13's decode
+        # table reads as "fleet failed". Reachable: a full or ACL-denied data
+        # volume makes Paths.create's makedirs or the lock's open() throw.
+        print(f"orchestrator failed before staging: {e}\n{traceback.format_exc()}",
+              file=sys.stderr)
+        return ORCHESTRATOR_FAILED
+
+    if not acquired:
+        print(f"previous pipeline run still active (pid {(holder or {}).get('pid')}, "
+              f"started {(holder or {}).get('started_at')}); exiting")
+        lock_path = None          # not ours — the finally must not touch it
+        return ORCHESTRATOR_FAILED
+
+    timeouts = {"fleet": args.timeout_fleet * 60,
+                "optimizers": args.timeout_optimizers * 60,
+                "strings": args.timeout_strings * 60}
+    log_path = os.path.join(paths.logs_dir, f"{LOG_PREFIX}{stamp}.log")
+    try:
+        prune_logs(paths.logs_dir, args.log_retention_days)
+        # Schema first: collect_secrets below reads `plants`, so on a fresh data
+        # dir the other order logs a spurious "no such table: plants" warning.
+        # Additive only (CREATE TABLE IF NOT EXISTS); the fleet stage's
+        # create_run still precedes anything the runner would migrate.
+        try:
+            conn = db.connect(paths.db_path)
+            try:
+                db.init_db(conn)
+            finally:
+                conn.close()
+        except Exception as e:
+            # A handled failure here must be as loud as an unhandled one: a bare
+            # `return` would skip the outer handler's alert, and a corrupt or
+            # locked app.db would then produce three missing reports and total
+            # silence. `log` is not bound yet, so report independently.
+            detail = f"could not open {paths.db_path}: {e}\n{traceback.format_exc()}"
+            print(f"!!! {detail}", file=sys.stderr)
+            try:
+                with open(log_path, "a", encoding="utf-8") as fp:
+                    fp.write(f"!!! {detail}\n")
+            except Exception:
+                pass
+            outcome = StageOutcome("orchestrator", "failed", detail=detail)
+            if should_alert([outcome], args.no_email):
+                try:
+                    (alert or send_alert)([outcome], log_path, stamp)
+                except Exception:
+                    pass          # never let an alert problem mask the DB error
+            return ORCHESTRATOR_FAILED
+
+        secrets, secrets_warning = collect_secrets(paths)
+        with open(log_path, "a", encoding="utf-8") as fp:
+            log = Tee(fp, events.Redactor(secrets))
+            log(f"=== solar pipeline {stamp} UTC — stages: {', '.join(stages)} ===")
+            if holder:
+                log(f"[note] reclaimed a stale lock from pid {holder.get('pid')} "
+                    f"(started {holder.get('started_at')})")
+            if secrets_warning:
+                log(f"[warn] {secrets_warning}")
+
+            outcomes = []
+            for name in stages:
+                # Per-stage isolation. Without it an unexpected raise from one
+                # stage — a transient sqlite lock in the fleet stage's guard
+                # query, say — would fall through to the outer handler, skip
+                # every later stage, and report 8 instead of naming the stage
+                # that actually broke. Continue-on-failure is the whole point.
+                try:
+                    if name == "fleet":
+                        outcomes.append((fleet or run_fleet_stage)(
+                            paths, args.range, timeouts["fleet"], log))
+                    else:
+                        outcomes.append((collector or run_collector_stage)(
+                            name, paths, timeouts[name], args.no_email, log))
+                except Exception as e:
+                    detail = f"{e}\n{traceback.format_exc()}"
+                    log(f"!!! stage {name}: raised unexpectedly: {detail}")
+                    outcomes.append(StageOutcome(name, "failed", detail=detail))
+
+            code = aggregate_exit_code(outcomes)
+            log("=== summary ===")
+            for o in outcomes:
+                log(f"  {o.name:<11} {o.status:<8} exit "
+                    f"{'—' if o.exit_code is None else o.exit_code:<4} "
+                    f"{o.duration_s:.0f}s")
+            log(f"pipeline finished: exit {code}")
+            if should_alert(outcomes, args.no_email):
+                log((alert or send_alert)(outcomes, log_path, stamp)[1])
+            return code
+    except Exception as e:
+        # Last resort: say so on stdout, in the log if we can, and by email.
+        detail = f"{e}\n{traceback.format_exc()}"
+        print(f"orchestrator failed: {detail}", file=sys.stderr)
+        if log_path:
+            try:
+                with open(log_path, "a", encoding="utf-8") as fp:
+                    fp.write(f"orchestrator failed: {detail}\n")
+            except Exception:
+                pass
+        if not args.no_email:
+            try:
+                # A synthetic stage name: this failure was the orchestrator's,
+                # and naming a real stage in the subject would misdirect.
+                (alert or send_alert)(
+                    [StageOutcome("orchestrator", "failed", detail=detail)],
+                    log_path or "(no pipeline log was created)", stamp)
+            except Exception:
+                pass
+        return ORCHESTRATOR_FAILED
+    finally:
+        # Guarded: an exception raised in a `finally` discards the pending
+        # return and propagates, which would exit 1 — the very mis-decode this
+        # function works to avoid. `lock_path` is None when we never took the
+        # lock, or when a live holder owns it.
+        if lock_path:
+            release_lock(lock_path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

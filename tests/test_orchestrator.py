@@ -667,3 +667,217 @@ def test_send_alert_distinguishes_no_recipients_from_unconfigured(monkeypatch):
     # PIPELINE_RECIPIENTS and REPORT_RECIPIENTS both unset, so no recipients
     sent, msg = orch.send_alert([_failed("strings")], "p.log", "20260805-060000")
     assert sent is False and "no recipients" in msg
+
+
+def _fake_stage(status, code=0):
+    def run(name_or_paths, *a, **k):
+        # run_collector_stage(name, ...) and run_fleet_stage(paths, ...) differ
+        # in their first argument; normalize to whichever we were given.
+        name = name_or_paths if isinstance(name_or_paths, str) else "fleet"
+        return orch.StageOutcome(name, status, exit_code=code)
+    return run
+
+
+def _main_args(tmp_path, *extra):
+    return ["--data-dir", str(tmp_path / "data"),
+            "--app-dir", str(tmp_path / "app"), *extra]
+
+
+def test_main_returns_zero_when_every_stage_is_ok(tmp_path):
+    (tmp_path / "app").mkdir()
+    rc = orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+                   collector=_fake_stage("ok"), alert=lambda *a, **k: (False, "x"))
+    assert rc == 0
+
+
+def test_main_exit_code_names_the_failing_stages(tmp_path):
+    (tmp_path / "app").mkdir()
+
+    def collector(name, *a, **k):
+        return orch.StageOutcome(name, "failed" if name == "strings" else "ok",
+                                 exit_code=4 if name == "strings" else 0)
+    rc = orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+                   collector=collector, alert=lambda *a, **k: (False, "x"))
+    assert rc == 4
+
+
+def test_main_runs_only_the_selected_stages(tmp_path):
+    (tmp_path / "app").mkdir()
+    ran = []
+
+    def collector(name, *a, **k):
+        ran.append(name)
+        return orch.StageOutcome(name, "ok", exit_code=0)
+
+    def fleet(*a, **k):
+        ran.append("fleet")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+    orch.main(_main_args(tmp_path, "--only", "strings"), fleet=fleet,
+              collector=collector, alert=lambda *a, **k: (False, "x"))
+    assert ran == ["strings"]
+
+
+def test_main_rejects_an_unknown_stage_with_8(tmp_path):
+    (tmp_path / "app").mkdir()
+    assert orch.main(_main_args(tmp_path, "--only", "inverters")) == \
+        orch.ORCHESTRATOR_FAILED
+
+
+def test_main_exits_8_while_another_run_holds_the_lock(tmp_path, capsys,
+                                                      monkeypatch):
+    # The holder pid must NOT be our own: acquire_lock skips the liveness check
+    # when hpid == pid (deliberate re-entrancy tolerance), so seeding
+    # os.getpid() would reclaim the lock and run every stage.
+    (tmp_path / "app").mkdir()
+    paths = Paths.create(str(tmp_path / "data"), str(tmp_path / "app"))
+    lock = os.path.join(paths.data_dir, orch.LOCK_NAME)
+    other = os.getpid() + 1
+    started = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    with open(lock, "w", encoding="utf-8") as fp:
+        json.dump({"pid": other, "started_at": started}, fp)
+    monkeypatch.setattr(orch, "pid_alive", lambda p: True)
+    ran, alerts = [], []
+
+    def fleet(*a, **k):
+        # Must return a real StageOutcome. A None here would crash
+        # aggregate_exit_code into main's catch-all, which returns 8 too — so a
+        # regression in the lock guard would still show rc == 8 and the test
+        # would pass for the wrong reason.
+        ran.append("fleet")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+
+    def collector(name, *a, **k):
+        ran.append(name)
+        return orch.StageOutcome(name, "ok", exit_code=0)
+
+    rc = orch.main(_main_args(tmp_path), fleet=fleet, collector=collector,
+                   alert=lambda *a, **k: alerts.append(1) or (True, "x"))
+    assert rc == orch.ORCHESTRATOR_FAILED
+    assert ran == [], "no stage may run while another pipeline holds the lock"
+    assert alerts == [], "a lock-held exit must stay quiet (no alert email)"
+    # Pins that acquire_lock refused rather than reclaiming, and that main's
+    # early return never released a lock it does not own.
+    assert json.loads(open(lock, encoding="utf-8").read())["pid"] == other
+    assert "still active" in capsys.readouterr().out
+
+
+def test_main_releases_the_lock_even_when_a_stage_fails(tmp_path):
+    (tmp_path / "app").mkdir()
+    orch.main(_main_args(tmp_path), fleet=_fake_stage("failed", code=1),
+              collector=_fake_stage("ok"), alert=lambda *a, **k: (False, "x"))
+    paths = Paths.create(str(tmp_path / "data"), str(tmp_path / "app"))
+    assert not os.path.exists(os.path.join(paths.data_dir, orch.LOCK_NAME))
+
+
+def test_main_writes_one_pipeline_log_per_run(tmp_path):
+    (tmp_path / "app").mkdir()
+    orch.main(_main_args(tmp_path), now=lambda: datetime(2026, 8, 5, 6, 0, 0,
+                                                          tzinfo=timezone.utc),
+              fleet=_fake_stage("ok"), collector=_fake_stage("ok"),
+              alert=lambda *a, **k: (False, "x"))
+    paths = Paths.create(str(tmp_path / "data"), str(tmp_path / "app"))
+    log = os.path.join(paths.logs_dir, "pipeline-20260805-060000.log")
+    assert os.path.exists(log)
+    assert "exit 0" in open(log, encoding="utf-8").read()
+
+
+def test_main_alerts_once_on_failure_and_stays_quiet_otherwise(tmp_path):
+    (tmp_path / "app").mkdir()
+    calls = []
+
+    def alert(outcomes, log_path, stamp, **k):
+        calls.append([o.name for o in outcomes if o.failed])
+        return True, "alert emailed"
+    orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+              collector=_fake_stage("ok"), alert=alert)
+    assert calls == []
+    orch.main(_main_args(tmp_path), fleet=_fake_stage("failed", code=1),
+              collector=_fake_stage("ok"), alert=alert)
+    assert calls == [["fleet"]]
+
+
+def test_main_no_email_suppresses_the_alert_and_sets_the_env(tmp_path,
+                                                             monkeypatch):
+    (tmp_path / "app").mkdir()
+    # setenv, not delenv: monkeypatch records an undo entry only for a key it
+    # actually touches, and delenv on an absent key records nothing. main()
+    # writes os.environ directly, so without a recorded baseline the "1" leaks
+    # into every later test in the session — including all of
+    # tests/web/test_runner.py, which would then run with email suppressed.
+    monkeypatch.setenv("SOLAR_NO_EMAIL", "0")
+    seen = {}
+
+    def fleet(*a, **k):
+        seen["suppressed"] = os.getenv("SOLAR_NO_EMAIL")
+        return orch.StageOutcome("fleet", "failed", exit_code=1)
+    calls = []
+    orch.main(_main_args(tmp_path, "--no-email"), fleet=fleet,
+              collector=_fake_stage("ok"),
+              alert=lambda *a, **k: calls.append(1) or (True, "x"))
+    assert calls == [], "--no-email must silence the alert too"
+    assert seen["suppressed"] == "1", "the fleet stage must inherit --no-email"
+
+
+def test_main_exports_utf8_for_every_child_including_the_fleet_runner(tmp_path,
+                                                                    monkeypatch):
+    # DEPLOYMENT.md §13 tells the operator PYTHONIOENCODING is not needed.
+    # That is only true if the variable reaches the fleet stage's runner
+    # subprocess, which RunManager._default_spawn launches with no env= and so
+    # inherits ours. Without this test a refactor could silently re-break the
+    # doc's promise, and the 06:00 run would die on a Hebrew print.
+    (tmp_path / "app").mkdir()
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    seen = {}
+
+    def fleet(*a, **k):
+        seen["enc"] = os.getenv("PYTHONIOENCODING")
+        return orch.StageOutcome("fleet", "ok", exit_code=0)
+    orch.main(_main_args(tmp_path, "--only", "fleet"), fleet=fleet,
+              collector=_fake_stage("ok"), alert=lambda *a, **k: (False, "x"))
+    assert seen["enc"] == "utf-8:replace"
+
+
+def test_main_isolates_a_stage_that_raises_unexpectedly(tmp_path):
+    # A stage raising is that STAGE's failure, not the orchestrator's: the
+    # exit code must name it (fleet = 1), and the later stages must still run.
+    # Letting it reach the outer handler would report 8 and skip both
+    # collectors, which defeats continue-on-failure.
+    (tmp_path / "app").mkdir()
+    ran = []
+
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    def collector(name, *a, **k):
+        ran.append(name)
+        return orch.StageOutcome(name, "ok", exit_code=0)
+    rc = orch.main(_main_args(tmp_path), fleet=boom, collector=collector,
+                   alert=lambda *a, **k: (False, "x"))
+    assert rc == orch.STAGE_BITS["fleet"]
+    assert ran == ["optimizers", "strings"], "later stages must still run"
+
+
+def test_main_returns_8_when_something_outside_the_stage_loop_fails(tmp_path,
+                                                                   monkeypatch):
+    # Exit 8 is reserved for the orchestrator itself failing. Here the summary
+    # path breaks, which is outside any stage.
+    (tmp_path / "app").mkdir()
+    monkeypatch.setattr(orch, "aggregate_exit_code",
+                        lambda outcomes: 1 / 0)
+    rc = orch.main(_main_args(tmp_path), fleet=_fake_stage("ok"),
+                   collector=_fake_stage("ok"),
+                   alert=lambda *a, **k: (False, "x"))
+    assert rc == orch.ORCHESTRATOR_FAILED
+
+
+def test_collect_secrets_returns_stored_credentials(tmp_path):
+    paths = _fleet_paths(tmp_path)
+    secrets, warning = orch.collect_secrets(paths)
+    assert "sekret" in secrets and warning is None
+
+
+def test_collect_secrets_warns_instead_of_raising_on_a_bad_data_dir(tmp_path):
+    paths = Paths.create(str(tmp_path / "data"), str(tmp_path / "app"))
+    os.makedirs(paths.db_path, exist_ok=True)      # a directory where the DB goes
+    secrets, warning = orch.collect_secrets(paths)
+    assert secrets == [] and warning is not None
